@@ -10,7 +10,7 @@ This is my experiment environment:
 ## Usage
 1. enter directory
 We take CIFAR-100 dataset for example.
-(```)
+'''bash
 $ cd DLDR
 $ cd CIFAR-100
-(```)
+'''
