@@ -45,7 +45,5 @@ We take CIFAR-100 dataset for example.
 
    where `epochs`  denotes the total training epochs for quasi-Newton algorithm, `alpha` denotes the learning rate for the rest part of the gradient after projection,  `params_start` denotes where our training begins and `params_end` denotes where DLDR sampling stops. `n_components` is the number of variables we use.
 
-
-
-​		We can easily change our model `$model` in `models.py`.
+   We can easily change our model `$model` in `models.py`.
 
