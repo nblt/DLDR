@@ -63,7 +63,7 @@ parser.add_argument('--save-every', dest='save_every',
                     type=int, default=10)
 parser.add_argument('--n_components', default=10, type=int, metavar='N',
                     help='n_components for PCA') 
-parser.add_argument('--params_start', default=0, type=int, metavar='N',
+parser.add_argument('--params_start', default=1, type=int, metavar='N',
                     help='which epoch start for PCA') 
 parser.add_argument('--params_end', default=51, type=int, metavar='N',
                     help='which epoch end for PCA') 
