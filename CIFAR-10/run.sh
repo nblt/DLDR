@@ -1,4 +1,3 @@
-
 #!/bin/bash
 # total time comparison on one GPU
 
