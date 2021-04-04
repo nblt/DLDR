@@ -68,6 +68,12 @@ parser.add_argument('--save-every', dest='save_every',
                     type=int, default=10)
 parser.add_argument('--n_components', default=10, type=int, metavar='N',
                     help='n_components for PCA') 
+parser.add_argument('--params_start', default=0, type=int, metavar='N',
+                    help='which epoch start for PCA') 
+parser.add_argument('--params_end', default=51, type=int, metavar='N',
+                    help='which epoch end for PCA') 
+parser.add_argument('--alpha', default=0, type=float, metavar='N',
+                    help='lr for momentum') 
 
 args = parser.parse_args()
 best_prec1 = 0
@@ -75,10 +81,11 @@ iters = 0
 train_acc, test_acc, train_loss, test_loss = [], [], [], []
 
 # Load sampled model parameters
-f = open('./save_resnet20/param_data_refine.txt','rb')  
+f = open('./save_resnet20/param_data_100.txt','rb')  
 # f = open('./save_nobn_resnet20/param_data_100_100.txt','rb')  
 data = pickle.load(f)
-W = data[:91, :]
+print ('params_end', args.params_end)
+W = data[args.params_start:args.params_end, :]
 # W = data
 print ('W:', W.shape)
 f.close()
