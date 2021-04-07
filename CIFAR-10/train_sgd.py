@@ -149,11 +149,11 @@ def main():
         model.half()
         criterion.half()
 
-    # optimizer = torch.optim.SGD(model.parameters(), args.lr,
-    #                             momentum=args.momentum,
-    #                             weight_decay=args.weight_decay)
+    optimizer = torch.optim.SGD(model.parameters(), args.lr,
+                                momentum=args.momentum,
+                                weight_decay=args.weight_decay)
     
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=args.weight_decay)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=args.weight_decay)
 
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
                                                         milestones=[100])
@@ -194,12 +194,12 @@ def main():
         best_prec1 = max(prec1, best_prec1)
 
         # if epoch > 0 and epoch % args.save_every == 0 or epoch == args.epochs - 1:
-        if epoch % 10 == 9 or epoch == args.epochs - 1:
-            save_checkpoint({
-                'epoch': epoch + 1,
-                'state_dict': model.state_dict(),
-                'best_prec1': best_prec1,
-            }, is_best, filename=os.path.join(args.save_dir, 'checkpoint_refine_' + str(epoch+1) + '.th'))
+        # if epoch % 10 == 9 or epoch == args.epochs - 1:
+        #     save_checkpoint({
+        #         'epoch': epoch + 1,
+        #         'state_dict': model.state_dict(),
+        #         'best_prec1': best_prec1,
+        #     }, is_best, filename=os.path.join(args.save_dir, 'checkpoint_refine_' + str(epoch+1) + '.th'))
 
         save_checkpoint({
             'state_dict': model.state_dict(),
@@ -314,8 +314,8 @@ def train(train_loader, model, criterion, optimizer, epoch):
         batch_time.update(time.time() - end)
         end = time.time()
 
-        if  i == 190:
-            param_vec.append(get_model_param_vec(model))
+        # if  i == 190:
+        #     param_vec.append(get_model_param_vec(model))
 
         if i % args.print_freq == 0:
             print('Epoch: [{0}][{1}/{2}]\t'
