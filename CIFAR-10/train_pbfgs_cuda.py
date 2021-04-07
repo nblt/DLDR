@@ -19,10 +19,10 @@ import pickle
 import random
 import resnet
 
-import pycuda.autoinit
-import pycuda.gpuarray as gpuarray
-import skcuda.linalg as linalg
-from skcuda.linalg import PCA as cuPCA
+# import pycuda.autoinit
+# import pycuda.gpuarray as gpuarray
+# import skcuda.linalg as linalg
+# from skcuda.linalg import PCA as cuPCA
 
 def set_seed(seed=233): 
     random.seed(seed)
@@ -127,35 +127,7 @@ def update_grad(model, grad_vec):
             size *= arr_shape[i]
         param.grad.data = grad_vec[idx:idx+size].reshape(arr_shape)
         idx += size
-
-param_vecs_idx = 0
-def add_param_vecs(param_vec):
-    # Maintain a queue for storing sampled model parameters
-
-    global W, args, param_vecs_idx, pca, P, Bk, grad_res_momentum
-
-    SIZE = 100
-    if W is None:
-        W = np.array([param_vec])
-    elif len(W) < SIZE:
-        W = np.row_stack((W, param_vec))
-    else:
-        W[param_vecs_idx, :] = param_vec
-        param_vecs_idx = (param_vecs_idx + 1) % SIZE
-    
-def re_compute():
-    # Recompute the basis variables
-
-    global W, P, Bk, grad_res_momentum
-
-    pca.fit_transform(W)
-    P = np.array(pca.components_)
-    print ('P:', P.shape)
-
-    # Flush the inverse Hessian approximation
-    Bk = np.eye(args.n_components)
-    grad_res_momentum = 0
-
+        
 def main():
 
     global args, best_prec1, Bk
@@ -345,7 +317,7 @@ T = 1000
 gamma = 0.9
 # for no bn
 # alpha = 0.0001
-alpha = 0.01
+alpha = 0.0
 grad_res_momentum = 0
 
 # Store the last gradient on basis variables for P_plus_BFGS update
