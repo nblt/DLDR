@@ -40,7 +40,7 @@ done
    ```bash
    $ ./run.sh
    
-```
+    ```
 
 Specifically, the demo consists of two steps:
 
