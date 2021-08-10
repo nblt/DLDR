@@ -180,11 +180,6 @@ def main():
     # Resume from params_start
     model.load_state_dict(torch.load(os.path.join(args.save_dir,  str(args.params_start) +  '.pt')))
 
-    #######################################################################################
-    # load final model
-    # model.load_state_dict(torch.load(os.path.join(args.save_dir,  '200' +  '.pt')))
-
-
     # Prepare Dataloader
     train_loader, val_loader = get_datasets(args)
 
@@ -196,37 +191,7 @@ def main():
         criterion.half()
 
     cudnn.benchmark = True
-
-    ############################################################################
-    # Load Model parameters as mean
-    # update_param(model, torch.from_numpy(W.mean(0)).cuda())
-    # validate(val_loader, model, criterion)
-
-    ############################################################################
-    # Test the accuracy change along a direction
-    # direction = torch.randn(269722).cuda()
-    # direction /= torch.norm(direction)
-    # directions = [P[0, :],  P[10, :], P[20, :], P[30, :], P[-1, :], direction]
-    # labels = ['first component', '11th component', '21th component', '31th component', 'last component', 'random direction']
-    # test_line(model, directions, labels, val_loader, criterion, fname='acc_last.png')
-    # print ('vanilla val acc & val loss', epoch_adversarial(val_loader, model, pgd_linf))
-    # print ('random val acc & val loss', epoch_adversarial(val_loader, model, pgd_linf, param_purturbation=direction*2))
-    # print ('0 val acc & val loss', epoch_adversarial(val_loader, model, pgd_linf, param_purturbation=P[0, :]*2))
-    # print ('30 val acc & val loss', epoch_adversarial(val_loader, model, pgd_linf, param_purturbation=P[30, :]*2))
-    # print ('0&30 val acc & val loss', epoch_adversarial(val_loader, model, pgd_linf, param_purturbation=(P[0, :]+P[30,:])*np.sqrt(2)))
-    # print ('30&35 val acc & val loss', epoch_adversarial(val_loader, model, pgd_linf, param_purturbation=(P[35, :]+P[30,:])*np.sqrt(2)))
-
-    # print ('vanilla val acc & val loss', epoch_adversarial(val_loader, model, fgsm))
-    # print ('random val acc & val loss', epoch_adversarial(val_loader, model, fgsm, param_purturbation=direction*2))
-    # print ('0 val acc & val loss', epoch_adversarial(val_loader, model, fgsm, param_purturbation=P[0, :]*2))
-    # print ('30 val acc & val loss', epoch_adversarial(val_loader, model, fgsm, param_purturbation=P[30, :]*2))
-    # print ('0&30 val acc & val loss', epoch_adversarial(val_loader, model, fgsm, param_purturbation=(P[0, :]+P[30,:])*np.sqrt(2)))
-    # print ('30&35 val acc & val loss', epoch_adversarial(val_loader, model, fgsm, param_purturbation=(P[35, :]+P[30,:])*np.sqrt(2)))
-
-    # return
-
-    #############################################################################
-    # optimizer = optim.SGD(model.parameters(), lr=1, momentum=0, weight_decay=1e-5)    
+ 
     optimizer = optim.SGD(model.parameters(), lr=1, momentum=0)
 
     if args.evaluate:
