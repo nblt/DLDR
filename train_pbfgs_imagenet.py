@@ -126,22 +126,6 @@ def update_param(model, param_vec):
         param.data = param_vec[idx:idx+size].reshape(arr_shape)
         idx += size
 
-def test_line(model, directions, labels, loader, criterion, dist=10, fname='acc.png'):
-    p0 = torch.from_numpy(get_model_param_vec(model)).cuda()
-    for (direction, label) in zip(directions, labels):
-        support, acc = [], []
-        for i in range(-dist, dist):
-            p = p0 + direction * i
-            update_param(model, p)
-            acc.append(validate(loader, model, criterion))
-            support.append(i)
-        plt.plot(support, acc, label=label)
-
-    plt.xlabel('coordinate')
-    plt.ylabel('test acc')
-    plt.legend()
-    plt.savefig(fname)
-
 def main():
 
     global args, best_prec1, Bk, p0, P
