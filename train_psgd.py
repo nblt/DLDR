@@ -107,7 +107,7 @@ def main():
     logFilename = os.path.join(output_dir, "train.log")
     utils.console_out(logFilename)
 
-        # Initialize wandb to log metrics
+    # Initialize wandb to log metrics
     if args.log_wandb:
         if has_wandb:
             wandb.init(project=args.project, config=args)
@@ -228,8 +228,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
     # Switch to train mode
     model.train()
-
-    end = time.time()
+    
     for i, (input, target) in enumerate(metric_logger.log_every(train_loader, args.print_freq, header)):
 
         # Load batch data to cuda
