@@ -31,17 +31,17 @@ parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 parser.add_argument('--epochs', default=200, type=int, metavar='N',
                     help='number of total epochs to run')
-parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
+parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('-b', '--batch-size', default=128, type=int,
+parser.add_argument('-b', '--batch_size', default=128, type=int,
                     metavar='N', help='mini-batch size (default: 128)')
-parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
+parser.add_argument('--lr', '--learning_rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
-parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
+parser.add_argument('--weight_decay', '--wd', default=1e-4, type=float,
                     metavar='W', help='weight decay (default: 1e-4)')
-parser.add_argument('--print-freq', '-p', default=50, type=int,
+parser.add_argument('--print_freq', '-p', default=50, type=int,
                     metavar='N', help='print frequency (default: 50 iterations)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
@@ -51,15 +51,12 @@ parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                     help='use pre-trained model')
 parser.add_argument('--half', dest='half', action='store_true',
                     help='use half-precision(16-bit) ')
-parser.add_argument('--save-dir', dest='save_dir',
-                    help='The directory used to save the trained models',
-                    default='save_temp', type=str)
-parser.add_argument('--save-every', dest='save_every',
-                    help='Saves checkpoints at every specified number of epochs',
-                    type=int, default=10)
-parser.add_argument('--randomseed', 
-                    help='Randomseed for training and initialization',
-                    type=int, default=1)
+parser.add_argument('--save_dir', default='save_temp', type=str,
+                    help='The directory used to save the trained models')
+parser.add_argument('--save_every', type=int, default=10,
+                    help='Saves checkpoints at every specified number of epochs')
+parser.add_argument('--randomseed', type=int, default=1, 
+                    help='Randomseed for training and initialization')
 parser.add_argument('--corrupt', default=0, type=float,
                     metavar='c', help='noise level for training set')
 parser.add_argument('--smalldatasets', default=None, type=float, dest='smalldatasets', 
