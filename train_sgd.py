@@ -1,10 +1,7 @@
 import argparse
 import os
-import shutil
 import time
 import numpy as np
-import pickle
-import random
 
 import torch
 import torch.nn as nn
@@ -12,11 +9,8 @@ import torch.nn.parallel
 import torch.backends.cudnn as cudnn
 import torch.optim
 import torch.utils.data
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
 
-import resnet
-from utils import get_datasets, get_model
+import utils
 
 # Parse arguments
 parser = argparse.ArgumentParser(description='Regular training and sampling for DLDR')
@@ -66,13 +60,6 @@ parser.add_argument('--smalldatasets', default=None, type=float, dest='smalldata
             
 best_prec1 = 0
 
-def set_seed(seed=1): 
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
 
 # Record training statistics
 train_loss = []
@@ -88,7 +75,7 @@ def main():
     
     args = parser.parse_args()
     
-    set_seed(args.randomseed)
+    utils.set_random_seed(args.randomseed)
 
 
     # Check the save_dir exists or not
@@ -97,7 +84,7 @@ def main():
         os.makedirs(args.save_dir)
 
     # Define model
-    model = torch.nn.DataParallel(get_model(args))
+    model = torch.nn.DataParallel(utils.get_model(args))
     model.cuda()
 
     # Optionally resume from a checkpoint
@@ -118,7 +105,7 @@ def main():
 
 
     # Prepare Dataloader
-    train_loader, val_loader = get_datasets(args)
+    train_loader, val_loader = utils.get_datasets(args)
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda()
@@ -156,7 +143,7 @@ def main():
         return
 
     is_best = 0
-    save_checkpoint({
+    utils.save_checkpoint({
         'epoch': 0,
         'state_dict': model.state_dict(),
         'best_prec1': best_prec1,
@@ -182,13 +169,13 @@ def main():
         best_prec1 = max(prec1, best_prec1)
 
         if epoch > 0 and epoch % args.save_every == 0 or epoch == args.epochs - 1:
-            save_checkpoint({
+            utils.save_checkpoint({
                 'epoch': epoch + 1,
                 'state_dict': model.state_dict(),
                 'best_prec1': best_prec1,
             }, is_best, filename=os.path.join(args.save_dir, 'checkpoint_refine_' + str(epoch+1) + '.th'))
 
-        save_checkpoint({
+        utils.save_checkpoint({
             'state_dict': model.state_dict(),
             'best_prec1': best_prec1,
         }, is_best, filename=os.path.join(args.save_dir, 'model.th'))
@@ -204,25 +191,16 @@ def main():
     print ('time: ', arr_time)
 
 
-def get_model_param_vec(model):
-    """
-    Return model parameters as a vector
-    """
-    vec = []
-    for name,param in model.named_parameters():
-        vec.append(param.detach().cpu().numpy().reshape(-1))
-    return np.concatenate(vec, 0)
-
 def train(train_loader, model, criterion, optimizer, epoch):
     """
     Run one train epoch
     """
     global train_loss, train_err, arr_time
     
-    batch_time = AverageMeter()
-    data_time = AverageMeter()
-    losses = AverageMeter()
-    top1 = AverageMeter()
+    batch_time = utils.AverageMeter()
+    data_time = utils.AverageMeter()
+    losses = utils.AverageMeter()
+    top1 = utils.AverageMeter()
 
     # switch to train mode
     model.train()    
@@ -255,7 +233,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
         loss = loss.float()
 
         # measure accuracy and record loss
-        prec1 = accuracy(output.data, target)[0]
+        prec1 = utils.accuracy(output.data, target)[0]
         losses.update(loss.item(), input.size(0))
         top1.update(prec1.item(), input.size(0))
 
@@ -287,9 +265,9 @@ def validate(val_loader, model, criterion):
     total_loss = 0
     total_err = 0
 
-    batch_time = AverageMeter()
-    losses = AverageMeter()
-    top1 = AverageMeter()
+    batch_time = utils.AverageMeter()
+    losses = utils.AverageMeter()
+    top1 = utils.AverageMeter()
 
     # switch to evaluate mode
     model.eval()
@@ -315,7 +293,7 @@ def validate(val_loader, model, criterion):
             total_err += (output.max(dim=1)[1] != target_var).sum().item()
 
             # measure accuracy and record loss
-            prec1 = accuracy(output.data, target)[0]
+            prec1 = utils.accuracy(output.data, target)[0]
             losses.update(loss.item(), input.size(0))
             top1.update(prec1.item(), input.size(0))
 
@@ -338,45 +316,6 @@ def validate(val_loader, model, criterion):
     test_err.append(total_err / len(val_loader.dataset))
 
     return top1.avg
-
-def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
-    """
-    Save the training model
-    """
-    torch.save(state, filename)
-
-class AverageMeter(object):
-    """Computes and stores the average and current value"""
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
-
-def accuracy(output, target, topk=(1,)):
-    """Computes the precision@k for the specified values of k"""
-    maxk = max(topk)
-    batch_size = target.size(0)
-
-    _, pred = output.topk(maxk, 1, True, True)
-    pred = pred.t()
-    correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-    res = []
-    for k in topk:
-        correct_k = correct[:k].view(-1).float().sum(0)
-        res.append(correct_k.mul_(100.0 / batch_size))
-    return res
 
 
 if __name__ == '__main__':

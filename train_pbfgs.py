@@ -18,21 +18,10 @@ from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 from sklearn.decomposition import PCA
-import matplotlib.pyplot as plt
 import numpy as np
-from numpy import linalg as LA
-import pickle
-import random
-from utils import get_datasets, get_model
 
-def set_seed(seed=233): 
-    print ('Random Seed:', seed)
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+import utils
+
 
 parser = argparse.ArgumentParser(description='P(+)-BFGS in pytorch')
 parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet32',
@@ -86,47 +75,10 @@ parser.add_argument('--accumulate', default=1, type=int, metavar='N',
                     help='how many times accumulate for gradients') 
 
 args = parser.parse_args()
-set_seed(args.randomseed)
+utils.set_random_seed(args.randomseed)
 best_prec1 = 0
 P = None
 train_acc, test_acc, train_loss, test_loss = [], [], [], []
-
-def get_model_param_vec(model):
-    """
-    Return model parameters as a vector
-    """
-    vec = []
-    for name,param in model.named_parameters():
-        vec.append(param.detach().cpu().numpy().reshape(-1))
-    return np.concatenate(vec, 0)
-
-def get_model_grad_vec(model):
-    # Return the model grad as a vector
-
-    vec = []
-    for name,param in model.named_parameters():
-        vec.append(param.grad.detach().reshape(-1))
-    return torch.cat(vec, 0)
-
-def update_grad(model, grad_vec):
-    idx = 0
-    for name,param in model.named_parameters():
-        arr_shape = param.grad.shape
-        size = 1
-        for i in range(len(list(arr_shape))):
-            size *= arr_shape[i]
-        param.grad.data = grad_vec[idx:idx+size].reshape(arr_shape)
-        idx += size
-
-def update_param(model, param_vec):
-    idx = 0
-    for name,param in model.named_parameters():
-        arr_shape = param.data.shape
-        size = 1
-        for i in range(len(list(arr_shape))):
-            size *= arr_shape[i]
-        param.data = param_vec[idx:idx+size].reshape(arr_shape)
-        idx += size
 
 def main():
 
@@ -138,7 +90,7 @@ def main():
         os.makedirs(args.save_dir)
     
     # Define model
-    model = torch.nn.DataParallel(get_model(args))
+    model = torch.nn.DataParallel(utils.get_model(args))
     model.cuda()
 
     # Load sampled model parameters
@@ -149,7 +101,7 @@ def main():
         # if i % 4 != 0: continue
 
         model.load_state_dict(torch.load(os.path.join(args.save_dir,  str(i) +  '.pt')))
-        W.append(get_model_param_vec(model))
+        W.append(utils.get_model_param_vec(model))
     W = np.array(W)
     print ('W:', W.shape)
 
@@ -166,7 +118,7 @@ def main():
     model.load_state_dict(torch.load(os.path.join(args.save_dir,  str(args.params_start) +  '.pt')))
 
     # Prepare Dataloader
-    train_loader, val_loader = get_datasets(args)
+    train_loader, val_loader = utils.get_datasets(args)
 
     # Define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda()
@@ -187,7 +139,7 @@ def main():
     print ('Train:', (args.start_epoch, args.epochs))
     end = time.time()
     end1 = end
-    p0 = get_model_param_vec(model)
+    p0 = utils.get_model_param_vec(model)
     epoch_time = []
     for epoch in range(args.start_epoch, args.epochs):
         # Train for one epoch
@@ -222,10 +174,10 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
     global P, W, iters, T, train_loss, train_acc, search_times, running_grad, p0, tot_iters
     
-    batch_time = AverageMeter()
-    data_time = AverageMeter()
-    losses = AverageMeter()
-    top1 = AverageMeter()
+    batch_time = utils.AverageMeter()
+    data_time = utils.AverageMeter()
+    losses = utils.AverageMeter()
+    top1 = utils.AverageMeter()
 
     # Switch to train mode
     model.train()
@@ -254,12 +206,12 @@ def train(train_loader, model, criterion, optimizer, epoch):
         if (tot_iters % args.accumulate > 0): continue
 
         # Do P_plus_BFGS update
-        gk = get_model_grad_vec(model) / args.accumulate
+        gk = utils.get_model_grad_vec(model) / args.accumulate
         P_plus_BFGS(model, optimizer, gk, loss.item(), input_var, target_var)
         optimizer.zero_grad()
 
         # Measure accuracy and record loss
-        prec1 = accuracy(output.data, target)[0]
+        prec1 = utils.accuracy(output.data, target)[0]
         losses.update(loss.item(), input.size(0))
         top1.update(prec1.item(), input.size(0))
 
@@ -334,7 +286,7 @@ def P_plus_BFGS(model, optimizer, grad, oldf, X, y):
 
     sk = dk
     while (m < search_times_MAX):
-        update_grad(model, torch.mm(P.transpose(0, 1), -sk).reshape(-1))
+        utils.update_grad(model, torch.mm(P.transpose(0, 1), -sk).reshape(-1))
         optimizer.step()
         yp = model(X)
         loss = nn.CrossEntropyLoss()(yp,y)
@@ -358,7 +310,7 @@ def P_plus_BFGS(model, optimizer, grad, oldf, X, y):
     grad_res_momentum = grad_res_momentum * gamma + grad_res
 
     # Update the model grad and do a step
-    update_grad(model, torch.mm(P.transpose(0, 1), -sk).reshape(-1) + grad_res_momentum * alpha)
+    utils.update_grad(model, torch.mm(P.transpose(0, 1), -sk).reshape(-1) + grad_res_momentum * alpha)
     optimizer.step()
 
 def validate(val_loader, model, criterion):
@@ -366,9 +318,9 @@ def validate(val_loader, model, criterion):
 
     global test_acc, test_loss  
 
-    batch_time = AverageMeter()
-    losses = AverageMeter()
-    top1 = AverageMeter()
+    batch_time = utils.AverageMeter()
+    losses = utils.AverageMeter()
+    top1 = utils.AverageMeter()
 
     # Switch to evaluate mode
     model.eval()
@@ -391,7 +343,7 @@ def validate(val_loader, model, criterion):
             loss = loss.float()
 
             # Measure accuracy and record loss
-            prec1 = accuracy(output.data, target)[0]
+            prec1 = utils.accuracy(output.data, target)[0]
             losses.update(loss.item(), input.size(0))
             top1.update(prec1.item(), input.size(0))
 
@@ -416,45 +368,6 @@ def validate(val_loader, model, criterion):
 
     return top1.avg
 
-def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
-    # Save the training model
-
-    torch.save(state, filename)
-
-class AverageMeter(object):
-    # Computes and stores the average and current value
-
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
-
-def accuracy(output, target, topk=(1,)):
-    # Computes the precision@k for the specified values of k
-
-    maxk = max(topk)
-    batch_size = target.size(0)
-
-    _, pred = output.topk(maxk, 1, True, True)
-    pred = pred.t()
-    correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-    res = []
-    for k in topk:
-        correct_k = correct[:k].view(-1).float().sum(0)
-        res.append(correct_k.mul_(100.0 / batch_size))
-    return res
 
 if __name__ == '__main__':
     main()

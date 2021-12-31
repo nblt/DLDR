@@ -25,6 +25,8 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
 
+import utils
+
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
@@ -93,13 +95,6 @@ test_acc = []
 arr_time = []
 
 iters = 0
-def get_model_param_vec(model):
-    # Return the model parameters as a vector
-
-    vec = []
-    for name,param in model.named_parameters():
-        vec.append(param.detach().cpu().reshape(-1).numpy())
-    return np.concatenate(vec, 0)
 
 def main():
     global train_loss, train_acc, test_loss, test_acc, arr_time
@@ -290,7 +285,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0):
-            save_checkpoint({
+            utils.save_checkpoint({
                 'epoch': epoch + 1,
                 'arch': args.arch,
                 'state_dict': model.state_dict(),
@@ -317,11 +312,11 @@ def train(train_loader, model, criterion, optimizer, epoch, args, ngpus_per_node
     global iters, param_vec, sample_idx
     global train_loss, train_acc, test_loss, test_acc, arr_time
     
-    batch_time = AverageMeter('Time', ':6.3f')
-    data_time = AverageMeter('Data', ':6.3f')
-    losses = AverageMeter('Loss', ':.4e')
-    top1 = AverageMeter('Acc@1', ':6.2f')
-    top5 = AverageMeter('Acc@5', ':6.2f')
+    batch_time = utils.AverageMeter('Time', ':6.3f')
+    data_time = utils.AverageMeter('Data', ':6.3f')
+    losses = utils.AverageMeter('Loss', ':.4e')
+    top1 = utils.AverageMeter('Acc@1', ':6.2f')
+    top5 = utils.AverageMeter('Acc@5', ':6.2f')
     progress = ProgressMeter(
         len(train_loader),
         [batch_time, data_time, losses, top1, top5],
@@ -346,7 +341,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args, ngpus_per_node
         loss = criterion(output, target)
 
         # measure accuracy and record loss
-        acc1, acc5 = accuracy(output, target, topk=(1, 5))
+        acc1, acc5 = utils.accuracy(output, target, topk=(1, 5))
         losses.update(loss.item(), images.size(0))
         top1.update(acc1[0], images.size(0))
         top5.update(acc5[0], images.size(0))
@@ -378,10 +373,10 @@ def train(train_loader, model, criterion, optimizer, epoch, args, ngpus_per_node
 
 def validate(val_loader, model, criterion, args):
     global train_loss, train_acc, test_loss, test_acc, arr_time
-    batch_time = AverageMeter('Time', ':6.3f')
-    losses = AverageMeter('Loss', ':.4e')
-    top1 = AverageMeter('Acc@1', ':6.2f')
-    top5 = AverageMeter('Acc@5', ':6.2f')
+    batch_time = utils.AverageMeter('Time', ':6.3f')
+    losses = utils.AverageMeter('Loss', ':.4e')
+    top1 = utils.AverageMeter('Acc@1', ':6.2f')
+    top5 = utils.AverageMeter('Acc@5', ':6.2f')
     progress = ProgressMeter(
         len(val_loader),
         [batch_time, losses, top1, top5],
@@ -403,7 +398,7 @@ def validate(val_loader, model, criterion, args):
             loss = criterion(output, target)
 
             # measure accuracy and record loss
-            acc1, acc5 = accuracy(output, target, topk=(1, 5))
+            acc1, acc5 = utils.accuracy(output, target, topk=(1, 5))
             losses.update(loss.item(), images.size(0))
             top1.update(acc1[0], images.size(0))
             top5.update(acc5[0], images.size(0))
@@ -421,36 +416,6 @@ def validate(val_loader, model, criterion, args):
     test_acc.append(top1.avg)
     test_loss.append(losses.avg)
     return top1.avg
-
-
-def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
-    torch.save(state, filename)
-    if is_best:
-        shutil.copyfile(filename, 'model_best.pth.tar')
-
-
-class AverageMeter(object):
-    """Computes and stores the average and current value"""
-    def __init__(self, name, fmt=':f'):
-        self.name = name
-        self.fmt = fmt
-        self.reset()
-
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
-    def __str__(self):
-        fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
-        return fmtstr.format(**self.__dict__)
 
 
 class ProgressMeter(object):
@@ -476,23 +441,6 @@ def adjust_learning_rate(optimizer, epoch, args):
     # lr = 0.1
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
-
-
-def accuracy(output, target, topk=(1,)):
-    """Computes the accuracy over the k top predictions for the specified values of k"""
-    with torch.no_grad():
-        maxk = max(topk)
-        batch_size = target.size(0)
-
-        _, pred = output.topk(maxk, 1, True, True)
-        pred = pred.t()
-        correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-        res = []
-        for k in topk:
-            correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
-            res.append(correct_k.mul_(100.0 / batch_size))
-        return res
 
 
 if __name__ == '__main__':
