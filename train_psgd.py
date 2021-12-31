@@ -2,6 +2,7 @@ import argparse
 import os
 import shutil
 import time
+import logging
 
 import torch
 import torch.nn as nn
@@ -54,7 +55,10 @@ parser.add_argument('--pretrained', dest='pretrained', action='store_true',
 parser.add_argument('--half', dest='half', action='store_true',
                     help='use half-precision(16-bit) ')
 parser.add_argument('--save-dir', dest='save_dir',
-                    help='The directory used to save the trained models',
+                    help='The directory used to save training',
+                    default='save_temp', type=str)
+parser.add_argument('--pretrain-dir', dest='pretrain_dir',
+                    help='The directory used to save the pretrained models',
                     default='save_temp', type=str)
 parser.add_argument('--save-every', dest='save_every',
                     help='Saves checkpoints at every specified number of epochs',
@@ -80,6 +84,12 @@ parser.add_argument('--corrupt', default=0, type=float,
 parser.add_argument('--smalldatasets', default=None, type=float, dest='smalldatasets', 
                     help='percent of small datasets')
 
+# wandb log
+parser.add_argument('--project', default='', type=str, metavar='NAME',
+                help='name of wandb project')
+parser.add_argument('--log_wandb', action='store_true', default=False,
+                help='log training and validation metrics to wandb')
+
 args = parser.parse_args()
 utils.set_random_seed(args.randomseed)
 best_prec1 = 0
@@ -91,37 +101,53 @@ def main():
     global args, best_prec1, Bk, p0, P
 
     # Check the save_dir exists or not
-    print (args.save_dir)
-    if not os.path.exists(args.save_dir):
-        os.makedirs(args.save_dir)
+    exp_name = utils.get_exp_name(args, prefix='psgd')
+    output_dir = utils.get_outdir(args.save_dir if args.save_dir else './output', exp_name)
+    utils.dump_args(args, output_dir)
+    logFilename = os.path.join(output_dir, "train.log")
+    utils.console_out(logFilename)
+
+        # Initialize wandb to log metrics
+    if args.log_wandb:
+        if has_wandb:
+            wandb.init(project=args.project, config=args)
+            wandb.run.name = exp_name
+        else: 
+            print("You've requested to log metrics to wandb but package not found. "
+                            "Metrics not being logged to wandb, try `pip install wandb`")
     
     # Define model
     model = torch.nn.DataParallel(utils.get_model(args))
     model.cuda()
+    n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    logging.info("Model = %s" % str(model))
+    logging.info('number of params: {} M'.format(n_parameters / 1e6))
 
     # Load sampled model parameters
-    print ('params: from', args.params_start, 'to', args.params_end)
+    logging.info(f'params: from {args.params_start} to {args.params_end}')
     W = []
     for i in range(args.params_start, args.params_end):
         ############################################################################
         # if i % 2 != 0: continue
 
-        model.load_state_dict(torch.load(os.path.join(args.save_dir,  str(i) +  '.pt')))
+        model.load_state_dict(torch.load(os.path.join(args.pretrain_dir,  str(i) +  '.pt')))
         W.append(utils.get_model_param_vec(model))
     W = np.array(W)
-    print ('W:', W.shape)
+    logging.info(f'W: {W.shape}')
 
     # Obtain base variables through PCA
     pca = PCA(n_components=args.n_components)
     pca.fit_transform(W)
     P = np.array(pca.components_)
-    print ('ratio:', pca.explained_variance_ratio_)
-    print ('P:', P.shape)
+    np.save(os.path.join(output_dir, f"P_{args.params_start}_{args.params_end}_{args.n_components}.npy"), P)
+    logging.info(f'ratio: {pca.explained_variance_ratio_}')
+    logging.info(f'P: {P.shape}')
 
     P = torch.from_numpy(P).cuda()
 
     # Resume from params_start
-    model.load_state_dict(torch.load(os.path.join(args.save_dir,  str(args.params_start) +  '.pt')))
+    model.load_state_dict(torch.load(os.path.join(args.pretrain_dir,  str(args.params_start) +  '.pt')))
 
     # Prepare Dataloader
     train_loader, val_loader = utils.get_datasets(args)
@@ -142,30 +168,52 @@ def main():
         validate(val_loader, model, criterion)
         return
 
-    print ('Train:', (args.start_epoch, args.epochs))
+    logging.info(f'Train: {args.start_epoch} + {args.epochs}')
     end = time.time()
     p0 = utils.get_model_param_vec(model)
     for epoch in range(args.start_epoch, args.epochs):
-        # Train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch)
+
+        # train for one epoch
+        train_stats = train(train_loader, model, criterion, optimizer, epoch)
         # Bk = torch.eye(args.n_components).cuda()
         lr_scheduler.step()
 
-        # Evaluate on validation set
-        prec1 = validate(val_loader, model, criterion)
+        # evaluate on validation set
+        prec1, val_stats = validate(val_loader, model, criterion, epoch)
+
+        # log metrics to wandb
+        log_stats = {'epoch': epoch, 'n_parameters': n_parameters}
+        log_stats = dict(train_stats.items() | val_stats.items() | log_stats.items())
+        if has_wandb and args.log_wandb:
+            wandb.log(log_stats)
 
         # Remember best prec@1 and save checkpoint
         is_best = prec1 > best_prec1
         best_prec1 = max(prec1, best_prec1)
+        logging.info(f"\033[0;36m @best prec1: {best_prec1} \033[0m")
 
-    print ('total time:', time.time() - end)
-    print ('train loss: ', train_loss)
-    print ('train acc: ', train_acc)
-    print ('test loss: ', test_loss)
-    print ('test acc: ', test_acc)      
-    print ('best_prec1:', best_prec1)
+        if epoch > 0 and epoch % args.save_every == 0 or epoch == args.epochs - 1:
+            utils.save_checkpoint({
+                'epoch': epoch + 1,
+                'state_dict': model.state_dict(),
+                'best_prec1': best_prec1,
+            }, is_best, filename=os.path.join(output_dir, 'checkpoint_refine_' + str(epoch+1) + '.th'))
 
-    # torch.save(model.state_dict(), 'PBFGS.pt',_use_new_zipfile_serialization=False)  
+        utils.save_checkpoint({
+            'state_dict': model.state_dict(),
+            'best_prec1': best_prec1,
+        }, is_best, filename=os.path.join(output_dir, 'model.th'))
+
+        # DLDR sampling
+        torch.save(model.state_dict(), os.path.join(output_dir,  str(epoch + 1) +  '.pt'))
+
+    logging.info(f'total time: {time.time() - end}')
+    logging.info(f'train loss: {train_loss}')
+    logging.info(f'train acc: {train_acc}')
+    logging.info(f'test loss: {test_loss}')
+    logging.info(f'test acc: {test_acc}')      
+    logging.info(f'best_prec1: {best_prec1}')
+
     torch.save(model.state_dict(), 'PSGD.pt')  
 
 running_grad = 0
@@ -175,19 +223,14 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
     global P, W, iters, T, train_loss, train_acc, search_times, running_grad, p0
     
-    batch_time = utils.AverageMeter()
-    data_time = utils.AverageMeter()
-    losses = utils.AverageMeter()
-    top1 = utils.AverageMeter()
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = 'Epoch: [{}]'.format(epoch)
 
     # Switch to train mode
     model.train()
 
     end = time.time()
-    for i, (input, target) in enumerate(train_loader):
-
-        # Measure data loading time
-        data_time.update(time.time() - end)
+    for i, (input, target) in enumerate(metric_logger.log_every(train_loader, args.print_freq, header)):
 
         # Load batch data to cuda
         target = target.cuda()
@@ -205,56 +248,35 @@ def train(train_loader, model, criterion, optimizer, epoch):
         loss.backward()
 
         # Do P_plus_BFGS update
-        gk = utils.get_model_grad_vec(model)
-        P_SGD(model, optimizer, gk, loss.item(), input_var, target_var)
+        grad = utils.get_model_grad_vec(model)
+        P_SGD(model, optimizer, grad)
 
         # Measure accuracy and record loss
         prec1 = utils.accuracy(output.data, target)[0]
-        losses.update(loss.item(), input.size(0))
-        top1.update(prec1.item(), input.size(0))
-
-        # Measure elapsed time
-        batch_time.update(time.time() - end)
-        end = time.time()
+        metric_logger.update(train_loss=loss.item())
+        metric_logger.update(train_prec1=prec1.item())
+        metric_logger.update(train_lr=optimizer.param_groups[0]['lr'])
         
-        if i % args.print_freq == 0 or i == len(train_loader)-1:
-            print('Epoch: [{0}][{1}/{2}]\t'
-                  'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                  'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-                      epoch, i, len(train_loader), batch_time=batch_time,
-                      data_time=data_time, loss=losses, top1=top1))
-        
-    train_loss.append(losses.avg)
-    train_acc.append(top1.avg)
+        # if i % args.print_freq == 0 or i == len(train_loader)-1:
+        #     print('Epoch: [{0}][{1}/{2}]\t'
+        #           'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+        #           'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
+        #           'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+        #           'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
+        #               epoch, i, len(train_loader), batch_time=batch_time,
+        #               data_time=data_time, loss=losses, top1=top1))
 
+    # gather the stats from all processes
+    # metric_logger.synchronize_between_processes()
+    logging.info(f"Averaged train stats: {metric_logger}")    
+    
+    train_loss.append(metric_logger.meters['train_loss'].global_avg)
+    train_acc.append(metric_logger.meters['train_prec1'].global_avg)
 
-# Set the update period of basis variables (per iterations)
-T = 1000
+    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
-# Set the momentum parameters
-gamma = args.gamma
-alpha = args.alpha
-grad_res_momentum = 0
-
-# Store the last gradient on basis variables for P_plus_BFGS update
-gk_last = None
-
-# Variables for BFGS and backtracking line search
-rho = 0.55
-rho = 0.4
-sigma = 0.4
-Bk = torch.eye(args.n_components).cuda()
-sk = None
-
-# Store the backtracking line search times
-search_times = []
-
-def P_SGD(model, optimizer, grad, oldf, X, y):
-    # P_plus_BFGS algorithm
-
-    global rho, sigma, Bk, sk, gk_last, grad_res_momentum, gamma, alpha, search_times
+def P_SGD(model, optimizer, grad):
+    # P_SGD algorithm
 
     gk = torch.mm(P, grad.reshape(-1,1))
 
@@ -265,21 +287,20 @@ def P_SGD(model, optimizer, grad, oldf, X, y):
     utils.update_grad(model, grad_proj)
     optimizer.step()
 
-def validate(val_loader, model, criterion):
-    # Run evaluation
-
+def validate(val_loader, model, criterion, epoch):
+    """
+    Run evaluation
+    """
     global test_acc, test_loss  
 
-    batch_time = utils.AverageMeter()
-    losses = utils.AverageMeter()
-    top1 = utils.AverageMeter()
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = 'Epoch: [{}]'.format(epoch)
 
     # Switch to evaluate mode
     model.eval()
 
-    end = time.time()
     with torch.no_grad():
-        for i, (input, target) in enumerate(val_loader):
+        for i, (input, target) in enumerate(metric_logger.log_every(val_loader, args.print_freq, header)):
             target = target.cuda()
             input_var = input.cuda()
             target_var = target.cuda()
@@ -296,29 +317,26 @@ def validate(val_loader, model, criterion):
 
             # Measure accuracy and record loss
             prec1 = utils.accuracy(output.data, target)[0]
-            losses.update(loss.item(), input.size(0))
-            top1.update(prec1.item(), input.size(0))
+            metric_logger.update(val_loss=loss.item())
+            metric_logger.update(val_prec1=prec1.item())
 
-            # Measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
+            # if i % args.print_freq == 0:
+            #     print('Test: [{0}/{1}]\t'
+            #           'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+            #           'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+            #           'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
+            #               i, len(val_loader), batch_time=batch_time, loss=losses,
+            #               top1=top1))
 
-            if i % args.print_freq == 0:
-                print('Test: [{0}/{1}]\t'
-                      'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                      'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                      'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-                          i, len(val_loader), batch_time=batch_time, loss=losses,
-                          top1=top1))
-
-    print(' * Prec@1 {top1.avg:.3f}'
-          .format(top1=top1))
+    # gather the stats from all processes
+    # metric_logger.synchronize_between_processes()
+    logging.info(f"Averaged train stats: {metric_logger}")
 
     # Store the test loss and test accuracy
-    test_loss.append(losses.avg)
-    test_acc.append(top1.avg)
+    test_loss.append(metric_logger.meters['val_loss'].global_avg)
+    test_acc.append(metric_logger.meters['val_prec1'].global_avg)
 
-    return top1.avg
+    return metric_logger.meters['val_prec1'].global_avg, {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
 if __name__ == '__main__':

@@ -200,7 +200,7 @@ def main():
         # remember best prec@1 and save checkpoint
         is_best = prec1 > best_prec1
         best_prec1 = max(prec1, best_prec1)
-        logging.info(f" @best prec1: {best_prec1}")
+        logging.info(f"\033[0;36m @best prec1: {best_prec1} \033[0m")
 
         if epoch > 0 and epoch % args.save_every == 0 or epoch == args.epochs - 1:
             utils.save_checkpoint({
@@ -238,6 +238,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
     total_loss, total_err = 0, 0
     for i, (input, target) in enumerate(metric_logger.log_every(train_loader, args.print_freq, header)):
 
+        # Load batch data to cuda
         target = target.cuda()
         input_var = input.cuda()
         target_var = target
