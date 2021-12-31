@@ -211,7 +211,7 @@ def main():
     logging.info(f'test acc: {test_acc}')      
     logging.info(f'best_prec1: {best_prec1}')
 
-    torch.save(model.state_dict(), 'PSGD.pt')  
+    torch.save(model.state_dict(), os.path.join(output_dir, 'PSGD.pt'))
 
 running_grad = 0
 
