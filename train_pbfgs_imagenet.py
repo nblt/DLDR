@@ -26,6 +26,12 @@ import random
 
 import utils
 
+try:
+    import wandb
+    has_wandb = True
+except ImportError: 
+    has_wandb = False
+
 
 parser = argparse.ArgumentParser(description='P(+)-BFGS in pytorch')
 parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet32',

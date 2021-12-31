@@ -1,6 +1,7 @@
 import argparse
 import os
 import time
+import logging
 import numpy as np
 
 import torch
@@ -11,6 +12,12 @@ import torch.optim
 import torch.utils.data
 
 import utils
+
+try:
+    import wandb
+    has_wandb = True
+except ImportError: 
+    has_wandb = False
 
 # Parse arguments
 parser = argparse.ArgumentParser(description='Regular training and sampling for DLDR')
@@ -57,6 +64,12 @@ parser.add_argument('--corrupt', default=0, type=float,
                     metavar='c', help='noise level for training set')
 parser.add_argument('--smalldatasets', default=None, type=float, dest='smalldatasets', 
                     help='percent of small datasets')
+
+# wandb log
+parser.add_argument('--project', default='', type=str, metavar='NAME',
+                help='name of wandb project')
+parser.add_argument('--log_wandb', action='store_true', default=False,
+                help='log training and validation metrics to wandb')
             
 best_prec1 = 0
 
@@ -79,27 +92,42 @@ def main():
 
 
     # Check the save_dir exists or not
-    print (args.save_dir)
-    if not os.path.exists(args.save_dir):
-        os.makedirs(args.save_dir)
+    exp_name = utils.get_exp_name(args, prefix='sgd')
+    output_dir = utils.get_outdir(args.save_dir if args.save_dir else './output', exp_name)
+    utils.dump_args(args, output_dir)
+    logFilename = os.path.join(output_dir, "train.log")
+    utils.console_out(logFilename)
+
+    # Initialize wandb to log metrics
+    if args.log_wandb:
+        if has_wandb:
+            wandb.init(project=args.project, config=args)
+            wandb.run.name = exp_name
+        else: 
+            print("You've requested to log metrics to wandb but package not found. "
+                            "Metrics not being logged to wandb, try `pip install wandb`")
 
     # Define model
     model = torch.nn.DataParallel(utils.get_model(args))
     model.cuda()
+    n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    logging.info("Model = %s" % str(model))
+    logging.info('number of params: {} M'.format(n_parameters / 1e6))
 
     # Optionally resume from a checkpoint
     if args.resume:
         if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
+            logging.info("loading checkpoint '{}'".format(args.resume))
             checkpoint = torch.load(args.resume)
             args.start_epoch = checkpoint['epoch']
-            print ('from ', args.start_epoch)
+            logging.info(f'from {args.start_epoch}')
             best_prec1 = checkpoint['best_prec1']
             model.load_state_dict(checkpoint['state_dict'])
-            print("=> loaded checkpoint '{}' (epoch {})"
+            logging.info("loaded checkpoint '{}' (epoch {})"
                   .format(args.evaluate, checkpoint['epoch']))
         else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
+            logging.info("no checkpoint found at '{}'".format(args.resume))
 
     cudnn.benchmark = True
 
@@ -147,48 +175,52 @@ def main():
         'epoch': 0,
         'state_dict': model.state_dict(),
         'best_prec1': best_prec1,
-    }, is_best, filename=os.path.join(args.save_dir, 'checkpoint_refine_' + str(0) + '.th'))
+    }, is_best, filename=os.path.join(output_dir, 'checkpoint_refine_' + str(0) + '.th'))
 
-    print ('Start training: ', args.start_epoch, '->', args.epochs)
+    logging.info(f'Start training: {args.start_epoch} -> {args.epochs}')
 
     # DLDR sampling
-    torch.save(model.state_dict(), os.path.join(args.save_dir,  str(0) +  '.pt'))
+    torch.save(model.state_dict(), os.path.join(output_dir,  str(0) +  '.pt'))
 
     for epoch in range(args.start_epoch, args.epochs):
 
         # train for one epoch
-        print('current lr {:.5e}'.format(optimizer.param_groups[0]['lr']))
-        train(train_loader, model, criterion, optimizer, epoch)
+        train_stats = train(train_loader, model, criterion, optimizer, epoch)
         lr_scheduler.step()
 
         # evaluate on validation set
-        prec1 = validate(val_loader, model, criterion)
+        prec1, val_stats = validate(val_loader, model, criterion, epoch)
+
+        # log metrics to wandb
+        log_stats = {'epoch': epoch, 'n_parameters': n_parameters}
+        log_stats = dict(train_stats.items() | val_stats.items() | log_stats.items())
+        if has_wandb and args.log_wandb:
+            wandb.log(log_stats)
 
         # remember best prec@1 and save checkpoint
         is_best = prec1 > best_prec1
         best_prec1 = max(prec1, best_prec1)
+        logging.info(f" @best prec1: {best_prec1}")
 
         if epoch > 0 and epoch % args.save_every == 0 or epoch == args.epochs - 1:
             utils.save_checkpoint({
                 'epoch': epoch + 1,
                 'state_dict': model.state_dict(),
                 'best_prec1': best_prec1,
-            }, is_best, filename=os.path.join(args.save_dir, 'checkpoint_refine_' + str(epoch+1) + '.th'))
+            }, is_best, filename=os.path.join(output_dir, 'checkpoint_refine_' + str(epoch+1) + '.th'))
 
         utils.save_checkpoint({
             'state_dict': model.state_dict(),
             'best_prec1': best_prec1,
-        }, is_best, filename=os.path.join(args.save_dir, 'model.th'))
+        }, is_best, filename=os.path.join(output_dir, 'model.th'))
 
         # DLDR sampling
-        torch.save(model.state_dict(), os.path.join(args.save_dir,  str(epoch + 1) +  '.pt'))
+        torch.save(model.state_dict(), os.path.join(output_dir,  str(epoch + 1) +  '.pt'))
 
-    print ('train loss: ', train_loss)
-    print ('train err: ', train_err)
-    print ('test loss: ', test_loss)
-    print ('test err: ', test_err)
-
-    print ('time: ', arr_time)
+    logging.info(f'train loss: {train_loss}')
+    logging.info(f'train err: {train_err}')
+    logging.info(f'test loss: {test_loss}')
+    logging.info(f'test err: {test_err}')
 
 
 def train(train_loader, model, criterion, optimizer, epoch):
@@ -196,21 +228,15 @@ def train(train_loader, model, criterion, optimizer, epoch):
     Run one train epoch
     """
     global train_loss, train_err, arr_time
-    
-    batch_time = utils.AverageMeter()
-    data_time = utils.AverageMeter()
-    losses = utils.AverageMeter()
-    top1 = utils.AverageMeter()
+
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = 'Epoch: [{}]'.format(epoch)
 
     # switch to train mode
     model.train()    
     
     total_loss, total_err = 0, 0
-    end = time.time()
-    for i, (input, target) in enumerate(train_loader):
-
-        # measure data loading time
-        data_time.update(time.time() - end)
+    for i, (input, target) in enumerate(metric_logger.log_every(train_loader, args.print_freq, header)):
 
         target = target.cuda()
         input_var = input.cuda()
@@ -234,29 +260,29 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
         # measure accuracy and record loss
         prec1 = utils.accuracy(output.data, target)[0]
-        losses.update(loss.item(), input.size(0))
-        top1.update(prec1.item(), input.size(0))
+        metric_logger.update(train_loss=loss.item())
+        metric_logger.update(train_prec1=prec1.item())
+        metric_logger.update(train_lr=optimizer.param_groups[0]['lr'])
 
-        # measure elapsed time
-        batch_time.update(time.time() - end)
-        end = time.time()
-
-        if i % args.print_freq == 0:
-            print('Epoch: [{0}][{1}/{2}]\t'
-                  'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                  'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-                      epoch, i, len(train_loader), batch_time=batch_time,
-                      data_time=data_time, loss=losses, top1=top1))
-
-    print ('Total time for epoch [{0}] : {1:.3f}'.format(epoch, batch_time.sum))
+        # if i % args.print_freq == 0:
+        #     logging.info('Epoch: [{0}][{1}/{2}]\t'
+        #           'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+        #           'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
+        #           'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+        #           'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
+        #               epoch, i, len(train_loader), batch_time=batch_time,
+        #               data_time=data_time, loss=losses, top1=top1))
+    
+    # gather the stats from all processes
+    # metric_logger.synchronize_between_processes()
+    logging.info(f"Averaged train stats: {metric_logger}")
 
     train_loss.append(total_loss / len(train_loader.dataset))
     train_err.append(total_err / len(train_loader.dataset)) 
-    arr_time.append(batch_time.sum)
 
-def validate(val_loader, model, criterion):
+    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+
+def validate(val_loader, model, criterion, epoch):
     """
     Run evaluation
     """
@@ -265,16 +291,14 @@ def validate(val_loader, model, criterion):
     total_loss = 0
     total_err = 0
 
-    batch_time = utils.AverageMeter()
-    losses = utils.AverageMeter()
-    top1 = utils.AverageMeter()
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    header = 'Epoch: [{}]'.format(epoch)
 
     # switch to evaluate mode
     model.eval()
 
-    end = time.time()
     with torch.no_grad():
-        for i, (input, target) in enumerate(val_loader):
+        for i, (input, target) in enumerate(metric_logger.log_every(val_loader, args.print_freq, header)):
             target = target.cuda()
             input_var = input.cuda()
             target_var = target.cuda()
@@ -294,28 +318,25 @@ def validate(val_loader, model, criterion):
 
             # measure accuracy and record loss
             prec1 = utils.accuracy(output.data, target)[0]
-            losses.update(loss.item(), input.size(0))
-            top1.update(prec1.item(), input.size(0))
+            metric_logger.update(val_loss=loss.item())
+            metric_logger.update(val_prec1=prec1.item())
 
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
-
-            if i % args.print_freq == 0:
-                print('Test: [{0}/{1}]\t'
-                      'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                      'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                      'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-                          i, len(val_loader), batch_time=batch_time, loss=losses,
-                          top1=top1))
-
-    print(' * Prec@1 {top1.avg:.3f}'
-          .format(top1=top1))
+            # if i % args.print_freq == 0:
+            #     logging.info('Test: [{0}/{1}]\t'
+            #           'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+            #           'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+            #           'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
+            #               i, len(val_loader), batch_time=batch_time, loss=losses,
+            #               top1=top1))
+    
+    # gather the stats from all processes
+    # metric_logger.synchronize_between_processes()
+    logging.info(f"Averaged train stats: {metric_logger}")
 
     test_loss.append(total_loss / len(val_loader.dataset))
     test_err.append(total_err / len(val_loader.dataset))
 
-    return top1.avg
+    return metric_logger.meters['val_prec1'].global_avg, {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
 if __name__ == '__main__':

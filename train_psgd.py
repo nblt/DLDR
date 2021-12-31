@@ -22,8 +22,11 @@ import resnet
 
 import utils
 
-
-print ('P-SGD')
+try:
+    import wandb
+    has_wandb = True
+except ImportError: 
+    has_wandb = False
 
 parser = argparse.ArgumentParser(description='P(+)-SGD in pytorch')
 parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet32',

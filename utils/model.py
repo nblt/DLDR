@@ -1,3 +1,4 @@
+import os
 import shutil
 import numpy as np
 import torch
@@ -45,10 +46,11 @@ def update_param(model, param_vec):
         idx += size
 
 
-def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
+def save_checkpoint(state, is_best=False, filename='checkpoint.pth.tar'):
     torch.save(state, filename)
     if is_best:
-        shutil.copyfile(filename, 'model_best.pth.tar')
+        output_dir, _ = os.path.split(filename)
+        shutil.copyfile(filename, os.path.join(output_dir, 'model_best.pth.tar'))
 
 
 def accuracy(output, target, topk=(1,)):

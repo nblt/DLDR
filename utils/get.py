@@ -8,6 +8,7 @@ import torchvision.datasets as datasets
 import torchvision.models as models_imagenet
 
 import numpy as np
+from datetime import datetime
 import resnet
 
 def get_datasets(args):
@@ -375,3 +376,31 @@ def get_model(args):
 
         return net
     return resnet.__dict__[args.arch](num_classes=num_class)
+
+def get_outdir(path, *paths, inc=False):
+    outdir = os.path.join(path, *paths)
+    if not os.path.exists(outdir):
+        os.makedirs(outdir)
+    elif inc:
+        count = 1
+        outdir_inc = outdir + '-' + str(count)
+        while os.path.exists(outdir_inc):
+            count = count + 1
+            outdir_inc = outdir + '-' + str(count)
+            assert count < 100
+        outdir = outdir_inc
+        os.makedirs(outdir)
+    return outdir
+
+def get_exp_name(args, prefix=''):
+    exp_name = "tmp"
+    if prefix:
+        exp_name = '-'.join([
+            prefix,
+            args.datasets,
+            args.arch,
+            str(args.batch_size),
+            str(args.lr),
+            datetime.now().strftime("%Y%m%d-%H%M%S")
+        ])
+    return exp_name
