@@ -1,6 +1,7 @@
 import os
 import yaml 
 import logging
+import numpy as np 
 
 def checkdir(dir_path):
     if not os.path.exists(dir_path):
@@ -28,3 +29,8 @@ def console_out(logFilename):
     console.setFormatter(formatter)
     # Create an instance
     logging.getLogger().addHandler(console)           # 实例化添加handler
+
+def log_dump_metrics(**metrics):
+    for name, nums in metrics.items():
+        logging.info(f'{name}: {nums}')
+        np.save(f'{name}.npy', nums)

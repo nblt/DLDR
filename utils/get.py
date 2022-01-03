@@ -11,6 +11,8 @@ import numpy as np
 from datetime import datetime
 import resnet
 
+from .dist import seed_worker
+
 def get_datasets(args):
     if args.datasets == 'MNIST':
         print ('normal dataset!')
@@ -226,6 +228,253 @@ def get_datasets(args):
     
     return train_loader, val_loader
 
+def get_datasets_ddp(args):
+    if args.datasets == 'MNIST':
+        print ('normal dataset!')
+        dataset_train = datasets.MNIST("../data", train=True, download=True, transform=transforms.ToTensor())
+        dataset_test = datasets.MNIST("../data", train=False, download=True, transform=transforms.ToTensor())
+        # train_loader = torch.utils.data.DataLoader(mnist_train, batch_size = args.batch_size, shuffle=True)
+        # val_loader = torch.utils.data.DataLoader(mnist_test, batch_size = 100, shuffle=False)
+
+    elif args.datasets == 'CIFAR10':
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225])
+
+        ################################################################        
+        if args.corrupt > 0:
+            path = 'cifar10_' + str(args.corrupt) +  '_corruptedlabel'
+            print ('corrupt:', args.corrupt)
+            print ('path:', path)
+
+            if os.path.exists(path):
+                dataset_train = torch.load(path)
+            else:
+                dataset_train = datasets.CIFAR10(root='../data', train=True, transform=transforms.Compose([
+                        transforms.RandomHorizontalFlip(),
+                        transforms.RandomCrop(32, 4),
+                        transforms.ToTensor(),
+                        normalize,
+                    ]), download=True)
+
+                for i in range(int(len(dataset_train) * args.corrupt)):
+                    dataset_train.targets[i] = np.random.choice(10)
+                
+                torch.save(dataset_train, path)
+
+            # train_loader = torch.utils.data.DataLoader(
+            #     dataset_train,
+            #     batch_size=args.batch_size, shuffle=True,
+            #     num_workers=args.workers, pin_memory=True)
+
+        elif args.smalldatasets:
+            percent = args.smalldatasets
+            path = 'cifar10_' + str(percent) +  '_smalldataset'
+            print ('Use ', percent, 'of Datasets')
+            print ('path:', path)
+            ################################################################
+            # Use small datasets
+
+            if os.path.exists(path):
+                print ('read dataset!')
+                dataset_train = torch.load(path)
+            else:
+                print ('make dataset!')
+                dataset_train = datasets.CIFAR10(root='../data', train=True, transform=transforms.Compose([
+                        transforms.RandomHorizontalFlip(),
+                        transforms.RandomCrop(32, 4),
+                        transforms.ToTensor(),
+                        normalize,
+                    ]), download=True)
+                N = int(percent * len(dataset_train))
+                dataset_train.targets = dataset_train.targets[:N]
+                dataset_train.data = dataset_train.data[:N]
+
+                torch.save(dataset_train, path)
+                print (N)
+                
+
+            # train_loader = torch.utils.data.DataLoader(
+            #     dataset_train,
+            #     batch_size=args.batch_size, shuffle=True,
+            #     num_workers=args.workers, pin_memory=True)
+            # print ('dataset size: ', len(train_loader.dataset))
+        
+        else:
+            print ('normal dataset!')
+        #     train_loader = torch.utils.data.DataLoader(
+        #         datasets.CIFAR10(root='../data', train=True, transform=transforms.Compose([
+        #             transforms.RandomHorizontalFlip(),
+        #             transforms.RandomCrop(32, 4),
+        #             transforms.ToTensor(),
+        #             normalize,
+        #         ]), download=True),
+        #         batch_size=args.batch_size, shuffle=True,
+        #         num_workers=args.workers, pin_memory=True)
+            dataset_train = datasets.CIFAR10(root='../data', train=True, transform=transforms.Compose([
+                transforms.RandomHorizontalFlip(),
+                transforms.RandomCrop(32, 4),
+                transforms.ToTensor(),
+                normalize,
+            ]), download=True)
+
+        # val_loader = torch.utils.data.DataLoader(
+        #     datasets.CIFAR10(root='../data', train=False, transform=transforms.Compose([
+        #         transforms.ToTensor(),
+        #         normalize,
+        #     ])),
+        #     batch_size=128, shuffle=False,
+        #     num_workers=args.workers, pin_memory=True)
+        dataset_test = datasets.CIFAR10(root='../data', train=False, transform=transforms.Compose([
+            transforms.ToTensor(),
+            normalize,
+        ]))
+
+    elif args.datasets == 'CIFAR100':
+        normalize = transforms.Normalize(mean=[0.5070751592371323, 0.48654887331495095, 0.4409178433670343],
+                                        std=[0.2673342858792401, 0.2564384629170883, 0.27615047132568404])
+
+        # train_loader = torch.utils.data.DataLoader(
+        #     datasets.CIFAR100(root='../data', train=True, transform=transforms.Compose([
+        #         transforms.RandomHorizontalFlip(),
+        #         transforms.RandomCrop(32, 4),
+        #         transforms.ToTensor(),
+        #         normalize,
+        #     ]), download=True),
+        #     batch_size=args.batch_size, shuffle=True,
+        #     num_workers=args.workers, pin_memory=True)
+
+        ################################################################        
+        if args.corrupt > 0:
+            path = 'cifar100_' + str(args.corrupt) +  '_corruptedlabel'
+            print ('corrupt:', args.corrupt)
+            print ('path:', path)
+
+            if os.path.exists(path):
+                dataset_train = torch.load(path)
+            else:
+                dataset_train = datasets.CIFAR100(root='../data', train=True, transform=transforms.Compose([
+                        transforms.RandomHorizontalFlip(),
+                        transforms.RandomCrop(32, 4),
+                        transforms.ToTensor(),
+                        normalize,
+                    ]), download=True)
+
+                for i in range(int(len(dataset_train) * args.corrupt)):
+                    dataset_train.targets[i] = np.random.choice(10)
+                
+                torch.save(dataset_train, path)
+
+            # train_loader = torch.utils.data.DataLoader(
+            #     dataset_train,
+            #     batch_size=args.batch_size, shuffle=True,
+            #     num_workers=args.workers, pin_memory=True)
+
+        elif args.smalldatasets:
+            percent = args.smalldatasets
+            path = 'cifar100_' + str(percent) +  '_smalldataset'
+            print ('Use ', percent, 'of Datasets')
+            print ('path:', path)
+            ################################################################
+            # Use small datasets
+
+            if os.path.exists(path):
+                print ('load dataset!')
+                dataset_train = torch.load(path)
+            else:
+                print ('create dataset!')
+                dataset_train = datasets.CIFAR100(root='../data', train=True, transform=transforms.Compose([
+                        transforms.RandomHorizontalFlip(),
+                        transforms.RandomCrop(32, 4),
+                        transforms.ToTensor(),
+                        normalize,
+                    ]), download=True)
+                N = int(percent * len(dataset_train))
+                dataset_train.targets = dataset_train.targets[:N]
+                dataset_train.data = dataset_train.data[:N]
+
+                torch.save(dataset_train, path)
+                print (N)
+                
+
+            # train_loader = torch.utils.data.DataLoader(
+            #     dataset_train,
+            #     batch_size=args.batch_size, shuffle=True,
+            #     num_workers=args.workers, pin_memory=True)
+            # print ('dataset size: ', len(train_loader.dataset))
+        
+        else:
+        #     print ('normal dataset!')
+        #     train_loader = torch.utils.data.DataLoader(
+        #         datasets.CIFAR100(root='../data', train=True, transform=transforms.Compose([
+        #             transforms.RandomHorizontalFlip(),
+        #             transforms.RandomCrop(32, 4),
+        #             transforms.ToTensor(),
+        #             normalize,
+        #         ]), download=True),
+        #         batch_size=args.batch_size, shuffle=True,
+        #         num_workers=args.workers, pin_memory=True)
+            dataset_train = datasets.CIFAR100(root='../data', train=True, transform=transforms.Compose([
+                transforms.RandomHorizontalFlip(),
+                transforms.RandomCrop(32, 4),
+                transforms.ToTensor(),
+                normalize,
+            ]), download=True)
+
+        # val_loader = torch.utils.data.DataLoader(
+        #     datasets.CIFAR100(root='../data', train=False, transform=transforms.Compose([
+        #         transforms.ToTensor(),
+        #         normalize,
+        #     ])),
+        #     batch_size=128, shuffle=False,
+        #     num_workers=args.workers, pin_memory=True)
+        dataset_test = datasets.CIFAR100(root='../data', train=False, transform=transforms.Compose([
+            transforms.ToTensor(),
+            normalize,
+        ]))
+
+    elif args.datasets == 'ImageNet':
+        traindir = os.path.join('/home/datasets/ILSVRC2012/', 'train')
+        valdir = os.path.join('/home/datasets/ILSVRC2012/', 'val')
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225])
+
+        dataset_train = datasets.ImageFolder(
+            traindir,
+            transforms.Compose([
+                transforms.RandomResizedCrop(224),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize,
+            ]))
+        dataset_test = datasets.ImageFolder(valdir, transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            normalize,
+        ]))
+    
+    return dataset_train, dataset_test
+
+def get_loader_ddp(args, dataset_train, dataset_test, sampler_train):
+    loader_train = torch.utils.data.DataLoader(
+        dataset_train, sampler=sampler_train, 
+        batch_size = args.batch_size, 
+        num_workers=args.workers,
+        pin_memory=args.pin_mem,
+        drop_last=True,
+        worker_init_fn=seed_worker
+    )
+
+    loader_test = torch.utils.data.DataLoader(
+        dataset_test, 
+        batch_size=args.batch_size, 
+        shuffle=False,
+        num_workers=args.workers, 
+        pin_memory=args.pin_mem
+    )
+    return loader_train, loader_test
+
+
 def get_model(args):
     if args.datasets == 'ImageNet':
         return models_imagenet.__dict__[args.arch]()
@@ -394,7 +643,7 @@ def get_outdir(path, *paths, inc=False):
 
 def get_exp_name(args, prefix=''):
     exp_name = "tmp"
-    if prefix == "sgd":
+    if "sgd" in prefix:
         exp_name = '-'.join([
             prefix,
             args.datasets,
@@ -403,7 +652,7 @@ def get_exp_name(args, prefix=''):
             str(args.lr),
             datetime.now().strftime("%Y%m%d-%H%M%S")
         ])
-    elif prefix == "psgd":
+    elif "psgd" in prefix:
         exp_name = '-'.join([
             prefix,
             args.datasets,
@@ -413,7 +662,7 @@ def get_exp_name(args, prefix=''):
             str(args.n_components),
             datetime.now().strftime("%Y%m%d-%H%M%S")
         ])
-    elif prefix == "sgd":
+    elif "pbfgs" in prefix:
         exp_name = '-'.join([
             prefix,
             args.datasets,

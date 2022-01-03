@@ -68,23 +68,16 @@ parser.add_argument('--project', default='', type=str, metavar='NAME',
 parser.add_argument('--log_wandb', action='store_true', default=False,
                 help='log training and validation metrics to wandb')
             
-best_prec1 = 0
-
-
-# Record training statistics
-train_loss = []
-train_err = []
-test_loss = []
-test_err = []
-arr_time = []
 
 def main():
-
-    global args, best_prec1
-    global param_avg, train_loss, train_err, test_loss, test_err, arr_time
+    # Record training statistics
+    best_prec1 = 0
+    train_loss = []
+    train_acc = []
+    test_loss = []
+    test_acc = []
     
     args = parser.parse_args()
-    
     utils.set_random_seed(args.randomseed)
 
 
@@ -173,20 +166,24 @@ def main():
         'state_dict': model.state_dict(),
         'best_prec1': best_prec1,
     }, is_best, filename=os.path.join(output_dir, 'checkpoint_refine_' + str(0) + '.th'))
-
-    logging.info(f'Start training: {args.start_epoch} -> {args.epochs}')
-
     # DLDR sampling
     torch.save(model.state_dict(), os.path.join(output_dir,  str(0) +  '.pt'))
 
+    logging.info(f'Start training: {args.start_epoch} -> {args.epochs}')
+    end = time.time()
     for epoch in range(args.start_epoch, args.epochs):
 
         # train for one epoch
-        train_stats = train(train_loader, model, criterion, optimizer, epoch)
+        train_stats, train_epoch_loss, train_epoch_acc = train(args, train_loader, model, criterion, optimizer, epoch)
         lr_scheduler.step()
 
         # evaluate on validation set
-        prec1, val_stats = validate(val_loader, model, criterion, epoch)
+        val_stats, prec1, test_epoch_loss, test_epoch_acc = validate(args, val_loader, model, criterion, epoch)
+
+        train_loss.append(train_epoch_loss)
+        train_acc.append(train_epoch_acc)
+        test_loss.append(test_epoch_loss)
+        test_acc.append(test_epoch_acc)
 
         # log metrics to wandb
         log_stats = {'epoch': epoch, 'n_parameters': n_parameters}
@@ -214,17 +211,18 @@ def main():
         # DLDR sampling
         torch.save(model.state_dict(), os.path.join(output_dir,  str(epoch + 1) +  '.pt'))
 
-    logging.info(f'train loss: {train_loss}')
-    logging.info(f'train err: {train_err}')
-    logging.info(f'test loss: {test_loss}')
-    logging.info(f'test err: {test_err}')
+    logging.info(f'total time: {time.time() - end}')
+    logging.info(f'best_prec1: {best_prec1}')
+    utils.log_dump_metrics(
+        train_loss=train_loss, train_acc=train_acc, 
+        test_loss=test_loss, test_acc=test_acc
+    )
 
 
-def train(train_loader, model, criterion, optimizer, epoch):
+def train(args, train_loader, model, criterion, optimizer, epoch):
     """
     Run one train epoch
     """
-    global train_loss, train_err, arr_time
 
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Epoch: [{}]'.format(epoch)
@@ -261,30 +259,24 @@ def train(train_loader, model, criterion, optimizer, epoch):
         metric_logger.update(train_loss=loss.item())
         metric_logger.update(train_prec1=prec1.item())
         metric_logger.update(train_lr=optimizer.param_groups[0]['lr'])
-
-        # if i % args.print_freq == 0:
-        #     logging.info('Epoch: [{0}][{1}/{2}]\t'
-        #           'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-        #           'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
-        #           'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-        #           'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-        #               epoch, i, len(train_loader), batch_time=batch_time,
-        #               data_time=data_time, loss=losses, top1=top1))
     
     # gather the stats from all processes
     # metric_logger.synchronize_between_processes()
     logging.info(f"Averaged train stats: {metric_logger}")
 
-    train_loss.append(total_loss / len(train_loader.dataset))
-    train_err.append(total_err / len(train_loader.dataset)) 
+    train_epoch_loss = metric_logger.meters['train_loss'].global_avg
+    train_epoch_acc = metric_logger.meters['train_prec1'].global_avg
 
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    return (
+        {k: meter.global_avg for k, meter in metric_logger.meters.items()}, 
+        train_epoch_loss, 
+        train_epoch_acc
+    )
 
-def validate(val_loader, model, criterion, epoch):
+def validate(args, val_loader, model, criterion, epoch):
     """
     Run evaluation
     """
-    global test_err, test_loss
 
     total_loss = 0
     total_err = 0
@@ -316,25 +308,22 @@ def validate(val_loader, model, criterion, epoch):
 
             # measure accuracy and record loss
             prec1 = utils.accuracy(output.data, target)[0]
-            metric_logger.update(val_loss=loss.item())
-            metric_logger.update(val_prec1=prec1.item())
-
-            # if i % args.print_freq == 0:
-            #     logging.info('Test: [{0}/{1}]\t'
-            #           'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-            #           'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-            #           'Prec@1 {top1.val:.3f} ({top1.avg:.3f})'.format(
-            #               i, len(val_loader), batch_time=batch_time, loss=losses,
-            #               top1=top1))
+            metric_logger.update(test_loss=loss.item())
+            metric_logger.update(test_prec1=prec1.item())
     
     # gather the stats from all processes
     # metric_logger.synchronize_between_processes()
     logging.info(f"Averaged train stats: {metric_logger}")
 
-    test_loss.append(total_loss / len(val_loader.dataset))
-    test_err.append(total_err / len(val_loader.dataset))
+    test_epoch_loss = metric_logger.meters['test_loss'].global_avg
+    test_epoch_acc = metric_logger.meters['test_prec1'].global_avg
 
-    return metric_logger.meters['val_prec1'].global_avg, {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    return (
+        {k: meter.global_avg for k, meter in metric_logger.meters.items()}, 
+        metric_logger.meters['test_prec1'].global_avg, 
+        test_epoch_loss, 
+        test_epoch_acc
+    )
 
 
 if __name__ == '__main__':

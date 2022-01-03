@@ -11,6 +11,8 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
+from .dist import is_dist_avail_and_initialized
+
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -178,10 +180,3 @@ class MetricLogger(object):
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
         logging.info('{} Total time: {} ({:.4f} s / it)'.format(
             header, total_time_str, total_time / len(iterable)))
-
-def is_dist_avail_and_initialized():
-    if not dist.is_available():
-        return False
-    if not dist.is_initialized():
-        return False
-    return True
