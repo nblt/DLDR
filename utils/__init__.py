@@ -3,7 +3,7 @@ from .random import set_random_seed
 from .model import (
     get_model_param_vec, get_model_grad_vec, update_grad, 
     update_param, save_checkpoint, accuracy, save_model, sample_model,
-    NativeScalerWithGradNormCount
+    NativeScalerWithGradNormCount, update_param_ddp
 )
 from .metrics import AverageMeter, MetricLogger
 from .log import console_out, dump_args, checkdir, log_dump_metrics

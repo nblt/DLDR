@@ -48,6 +48,17 @@ def update_param(model, param_vec):
         param.data = param_vec[idx:idx+size].reshape(arr_shape)
         idx += size
 
+def update_param_ddp(model, param_vec):
+    idx = 0
+    for name, param in model.named_parameters():
+        arr_shape = param.shape
+        size = 1
+        for i in range(len(list(arr_shape))):
+            size *= arr_shape[i]
+        assign_param = param_vec[idx:idx+size]
+        assign_param = assign_param.reshape(arr_shape)
+        param = assign_param
+        idx += size
 
 def save_checkpoint(state, is_best=False, filename='checkpoint.pth.tar'):
     torch.save(state, filename)

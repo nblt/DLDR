@@ -19,6 +19,7 @@ import numpy as np
 from numpy import linalg as LA
 import pickle
 import random
+from model_dldr import reparam_model_v1
 import resnet
 
 import utils
@@ -98,7 +99,7 @@ def main():
     utils.set_random_seed(args.randomseed)
 
     # Check the save_dir exists or not
-    exp_name = utils.get_exp_name(args, prefix='psgd')
+    exp_name = utils.get_exp_name(args, prefix='psgd_ddp')
     output_dir = utils.get_outdir(args.save_dir if args.save_dir else './output', exp_name)
     utils.dump_args(args, output_dir)
     logFilename = os.path.join(output_dir, "train.log")
@@ -146,6 +147,24 @@ def main():
     # Resume from params_start
     model.load_state_dict(torch.load(os.path.join(args.pretrain_dir,  str(args.params_start) +  '.pt')))
 
+    # W0 = torch.tensor(utils.get_model_param_vec(model)).unsqueeze(0)
+    # print("W0", W0, W0.shape)
+    # w0 = torch.mm(W0, P.transpose(0, 1))
+    # print("w0", w0, w0.shape)
+    # W00 = torch.mm(w0, P)
+    # print("W00", W00, W00.shape)
+    # w0_inv = torch.mm(W0, torch.linalg.pinv(P))
+    # print("w0_inv", w0_inv, w0_inv.shape)
+    # W00_inv = torch.mm(w0_inv, P)
+    # print("W00_inv", W00_inv, W00_inv.shape)
+
+    # exit()
+    param0 = torch.from_numpy(utils.get_model_param_vec(model)).cuda()
+    reparam_model = reparam_model_v1(model, param0, args.n_components, P)
+    reparam_model = torch.nn.DataParallel(reparam_model)
+    reparam_model.cuda()
+    logging.info("Reparam Model = %s" % str(reparam_model))
+
     # Prepare Dataloader
     train_loader, val_loader = utils.get_datasets(args)
     
@@ -157,25 +176,23 @@ def main():
 
     cudnn.benchmark = True
 
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9)
+    optimizer = optim.SGD(reparam_model.module.get_param(), 
+                          lr=args.lr, momentum=0.9)
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
                                                         milestones=[30, 50], last_epoch=args.start_epoch - 1)
 
-    if args.evaluate:
-        validate(val_loader, model, criterion)
-        return
 
     logging.info(f'Start training: {args.start_epoch} -> {args.epochs}')
     end = time.time()
     for epoch in range(args.start_epoch, args.epochs):
 
         # train for one epoch
-        train_stats, train_epoch_loss, train_epoch_acc = train(args, train_loader, model, P, criterion, optimizer, epoch)
+        train_stats, train_epoch_loss, train_epoch_acc = train(args, train_loader, reparam_model, P, criterion, optimizer, epoch)
         # Bk = torch.eye(args.n_components).cuda()
         lr_scheduler.step()
 
         # evaluate on validation set
-        val_stats, prec1, test_epoch_loss, test_epoch_acc = validate(args, val_loader, model, criterion, epoch)
+        val_stats, prec1, test_epoch_loss, test_epoch_acc = validate(args, val_loader, reparam_model, criterion, epoch)
 
         train_loss.append(train_epoch_loss)
         train_acc.append(train_epoch_acc)
@@ -240,13 +257,18 @@ def train(args, train_loader, model, P, criterion, optimizer, epoch):
         loss = criterion(output, target_var)
 
         # Compute gradient and do SGD step
+        model.module.model.zero_grad()
         optimizer.zero_grad()
         loss.backward()
+        model.module.update_low_dim_grad()
+
+        optimizer.step()
 
         # Do P_plus_BFGS update
-        grad = utils.get_model_grad_vec(model)
-        P_SGD(model, optimizer, grad, P)
-
+        # grad = utils.get_model_grad_vec(model)
+        # P_SGD(model, optimizer, grad, P)
+        output = output.float()
+        loss = loss.float()
         # Measure accuracy and record loss
         prec1 = utils.accuracy(output.data, target)[0]
         metric_logger.update(train_loss=loss.item())
