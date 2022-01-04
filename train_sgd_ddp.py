@@ -19,6 +19,8 @@ import utils
 from utils import NativeScalerWithGradNormCount as NativeScaler
 import model_dldr
 
+import timm.scheduler, timm.optim
+
 try:
     import wandb
     has_wandb = True
@@ -53,23 +55,48 @@ parser.add_argument('--clip_grad', type=float, default=None, metavar='NORM',
                     help='Clip gradient norm (default: None, no clipping)')
 parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
                     help='SGD momentum (default: 0.9)')
-parser.add_argument('--weight_decay', type=float, default=0.05,
-                    help='weight decay (default: 0.05)')
+parser.add_argument('--weight_decay', type=float, default=1e-4,
+                    help='weight decay (default: 1e-4)')
 parser.add_argument('--weight_decay_end', type=float, default=None, help="""Final value of the
     weight decay. We use a cosine schedule for WD. 
     (Set the same value with args.weight_decay to keep weight decay no change)""")
 
-parser.add_argument('--lr', type=float, default=1.5e-4, metavar='LR',
-                    help='learning rate (default: 1.5e-4)')
-parser.add_argument('--warmup_lr', type=float, default=1e-6, metavar='LR',
-                    help='warmup learning rate (default: 1e-6)')
-parser.add_argument('--min_lr', type=float, default=1e-5, metavar='LR',
+# Learning rate schedule parameters
+parser.add_argument('--sched', default='cosine', type=str, metavar='SCHEDULER',
+                    help='LR scheduler (default: "step"')
+parser.add_argument('--lr', type=float, default=0.05, metavar='LR',
+                    help='learning rate (default: 0.05)')
+parser.add_argument('--lr_noise', type=float, nargs='+', default=None, metavar='pct, pct',
+                    help='learning rate noise on/off epoch percentages')
+parser.add_argument('--lr_noise_pct', type=float, default=0.67, metavar='PERCENT',
+                    help='learning rate noise limit percent (default: 0.67)')
+parser.add_argument('--lr_noise_std', type=float, default=1.0, metavar='STDDEV',
+                    help='learning rate noise std-dev (default: 1.0)')
+parser.add_argument('--lr_cycle_mul', type=float, default=1.0, metavar='MULT',
+                    help='learning rate cycle len multiplier (default: 1.0)')
+parser.add_argument('--lr_cycle_decay', type=float, default=0.5, metavar='MULT',
+                    help='amount to decay each learning rate cycle (default: 0.5)')
+parser.add_argument('--lr_cycle_limit', type=int, default=1, metavar='N',
+                    help='learning rate cycle limit, cycles enabled if > 1')
+parser.add_argument('--lr_k_decay', type=float, default=1.0,
+                    help='learning rate k-decay for cosine/poly (default: 1.0)')
+parser.add_argument('--warmup_lr', type=float, default=0.0001, metavar='LR',
+                    help='warmup learning rate (default: 0.0001)')
+parser.add_argument('--min_lr', type=float, default=1e-6, metavar='LR',
                     help='lower lr bound for cyclic schedulers that hit 0 (1e-5)')
+parser.add_argument('--epoch_repeats', type=float, default=0., metavar='N',
+                    help='epoch repeat multiplier (number of times to repeat dataset epoch per train epoch).')
+parser.add_argument('--decay_epochs', type=float, default=100, metavar='N',
+                    help='epoch interval to decay LR')
+parser.add_argument('--warmup_epochs', type=int, default=3, metavar='N',
+                    help='epochs to warmup LR, if scheduler supports')
+parser.add_argument('--cooldown_epochs', type=int, default=10, metavar='N',
+                    help='epochs to cooldown LR at min_lr, after cyclic schedule ends')
+parser.add_argument('--patience_epochs', type=int, default=10, metavar='N',
+                    help='patience epochs for Plateau LR scheduler (default: 10')
+parser.add_argument('--decay_rate', '--dr', type=float, default=0.1, metavar='RATE',
+                    help='LR decay rate (default: 0.1)')
 
-parser.add_argument('--warmup_epochs', type=int, default=40, metavar='N',
-                    help='epochs to warmup LR, if scheduler supports')
-parser.add_argument('--warmup_steps', type=int, default=-1, metavar='N',
-                    help='epochs to warmup LR, if scheduler supports')
 
 parser.add_argument('--epochs', default=200, type=int, metavar='N',
                     help='number of total epochs to run')
@@ -140,13 +167,12 @@ def main():
 
     # Define model
     model = utils.get_model(args)
-    model = model_dldr.pretrain_model(model)
     model.to(device)
     model_without_ddp = model
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     total_batch_size = args.batch_size * utils.get_world_size()
-    args.lr = args.lr * total_batch_size / 256
+    args.lr = args.lr * max(1.0, total_batch_size / 256)
 
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
@@ -156,6 +182,7 @@ def main():
         # Check the save_dir exists or not
         exp_name = utils.get_exp_name(args, prefix='sgd_ddp')
         output_dir = utils.get_outdir(args.save_dir if args.save_dir else './output', exp_name)
+        print(f"save at {output_dir}")
         utils.dump_args(args, output_dir)
         logFilename = os.path.join(output_dir, "train.log")
         print(f"logging into: {logFilename}")
@@ -193,14 +220,13 @@ def main():
         model.half()
         criterion.half()
 
-    # if args.optimizer == 'sgd':
+    # if args.opt == 'sgd':
     #     optimizer = torch.optim.SGD(model.parameters(), args.lr,
     #                                 momentum=args.momentum,
     #                                 weight_decay=args.weight_decay)
-    # elif args.optimizer == 'adam':
+    # elif args.opt == 'adam':
     #     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=args.weight_decay)
-    optimizer = utils.create_optimizer(
-        args, model_without_ddp)
+    optimizer = timm.optim.create_optimizer(args, model_without_ddp)
     
     ##################################################################################################
     
@@ -218,18 +244,30 @@ def main():
         for param_group in optimizer.param_groups:
             param_group['lr'] = args.lr*0.1
 
-    print("Use step level LR & WD scheduler!")
-    lr_schedule_values = utils.cosine_scheduler(
-        args.lr, args.min_lr, args.epochs, num_training_steps_per_epoch,
-        warmup_epochs=args.warmup_epochs, warmup_steps=args.warmup_steps,
-    )
-    if args.weight_decay_end is None:
-        args.weight_decay_end = args.weight_decay
-    wd_schedule_values = utils.cosine_scheduler(
-        args.weight_decay, args.weight_decay_end, args.epochs, num_training_steps_per_epoch)
-    print("Max WD = %.7f, Min WD = %.7f" % (max(wd_schedule_values), min(wd_schedule_values)))
+    # print("Use step level LR & WD scheduler!")
+    # lr_schedule_values = utils.cosine_scheduler(
+    #     args.lr, args.min_lr, args.epochs, num_training_steps_per_epoch,
+    #     warmup_epochs=args.warmup_epochs, warmup_steps=args.warmup_steps,
+    # )
+    # if args.weight_decay_end is None:
+    #     args.weight_decay_end = args.weight_decay
+    # wd_schedule_values = utils.cosine_scheduler(
+    #     args.weight_decay, args.weight_decay_end, args.epochs, num_training_steps_per_epoch)
+    # print("Max WD = %.7f, Min WD = %.7f" % (max(wd_schedule_values), min(wd_schedule_values)))
 
-    loss_scaler = NativeScaler()
+    # setup learning rate schedule and starting epoch
+    lr_scheduler, num_epochs = timm.scheduler.create_scheduler(args, optimizer)
+    start_epoch = 0
+    if args.start_epoch is not None:
+        # a specified start_epoch will always override the resume epoch
+        start_epoch = args.start_epoch
+    if lr_scheduler is not None and start_epoch > 0:
+        lr_scheduler.step(start_epoch)
+    if args.local_rank == 0:
+        logging.info('Scheduled epochs: {}'.format(num_epochs))
+
+    # loss_scaler = NativeScaler()
+    loss_scaler = None
         
     logging.info("Model = %s" % str(model))
     logging.info('number of params: {} M'.format(n_parameters / 1e6))
@@ -238,21 +276,23 @@ def main():
     logging.info("Number of training examples per epoch = %d" % (total_batch_size * num_training_steps_per_epoch))
     logging.info(f'Start training: {args.start_epoch} -> {args.epochs}')
     start_time = time.time()
-    for epoch in range(args.start_epoch, args.epochs):
-        if args.distributed:
+    for epoch in range(start_epoch, num_epochs):
+        if args.distributed and hasattr(data_loader_train.sampler, 'set_epoch'):
             data_loader_train.sampler.set_epoch(epoch)
         
         # train for one epoch
         train_stats, train_epoch_loss, train_epoch_acc = train(args, 
             data_loader_train, model, criterion, optimizer, epoch, 
             loss_scaler, device, args.clip_grad, 
-            start_steps=epoch * num_training_steps_per_epoch,
-            lr_schedule_values=lr_schedule_values,
-            wd_schedule_values=wd_schedule_values,)
+            start_steps=epoch * num_training_steps_per_epoch)
 
         # evaluate on validation set
         val_stats, prec1, test_epoch_loss, test_epoch_acc = validate(args, 
             data_loader_test, model, criterion, epoch, device)
+
+        if lr_scheduler is not None:
+                # step LR for next epoch
+                lr_scheduler.step(epoch + 1, val_stats["test_loss"])
 
         # remember best prec@1 and save checkpoint
         is_best = prec1 > best_prec1
@@ -269,7 +309,7 @@ def main():
                 wandb.log(log_stats)
             logging.info(f"\033[0;36m @best prec1: {best_prec1} \033[0m")
 
-        if utils.is_main_process() and epoch > 0 and epoch % args.save_every == 0 or epoch == args.epochs - 1:
+        if utils.is_main_process() and (epoch > 0 and epoch % args.save_every == 0 or epoch == args.epochs - 1):
             utils.save_model(
                 args=args, epoch=epoch, output_dir=output_dir, 
                 model_without_ddp=model_without_ddp, optimizer=optimizer,
@@ -284,10 +324,10 @@ def main():
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
         logging.info(f'total time: {total_time_str}')
         logging.info(f'best_prec1: {best_prec1}')
-        # utils.log_dump_metrics(
-        #     train_loss=train_loss, train_acc=train_acc, 
-        #     test_loss=test_loss, test_acc=test_acc
-        # ) 
+        utils.log_dump_metrics(output_dir=output_dir,
+            train_loss=train_loss, train_acc=train_acc, 
+            test_loss=test_loss, test_acc=test_acc
+        ) 
 
 
 def train(args, train_loader: Iterable, model: torch.nn.Module, criterion, 
@@ -311,7 +351,9 @@ def train(args, train_loader: Iterable, model: torch.nn.Module, criterion,
                     param_group["lr"] = lr_schedule_values[it] * param_group["lr_scale"]
                 if wd_schedule_values is not None and param_group["weight_decay"] > 0:
                     param_group["weight_decay"] = wd_schedule_values[it]
-
+        
+        if lr_scheduler is not None:
+            lr_scheduler.step_frac(epoch + (step + 1) / len(train_loader))
         # Load batch data to cuda
         target = target.to(device)
         input_var = input.to(device)
@@ -331,8 +373,15 @@ def train(args, train_loader: Iterable, model: torch.nn.Module, criterion,
         # compute gradient and do SGD step
         optimizer.zero_grad()
         is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
-        grad_norm = loss_scaler(loss, optimizer, clip_grad=max_norm,
-                                parameters=model.parameters(), create_graph=is_second_order)
+        grad_norm = None
+        if loss_scaler is not None:
+            grad_norm = loss_scaler(loss, optimizer, 
+                                    clip_grad=max_norm,
+                                    parameters=model.parameters(), 
+                                    create_graph=is_second_order)
+        else:
+            loss.backward(create_graph=is_second_order)
+            optimizer.step()
 
         # optimizer.step()
         output = output.float()
@@ -359,12 +408,14 @@ def train(args, train_loader: Iterable, model: torch.nn.Module, criterion,
         metric_logger.update(train_loss=loss.item())
         metric_logger.update(train_prec1=prec1.item())
         # metric_logger.update(train_lr=optimizer.param_groups[0]['lr'])
-        metric_logger.update(weight_decay=weight_decay_value)
-        metric_logger.update(grad_norm=grad_norm)
+        if weight_decay_value is not None:
+            metric_logger.update(weight_decay=weight_decay_value)
+        if grad_norm is not None:
+            metric_logger.update(grad_norm=grad_norm)
 
     # lr_scheduler.step()
-        if lr_scheduler is not None:
-            lr_scheduler.step_update(start_steps + step)
+        # if lr_scheduler is not None:
+        #     lr_scheduler.step_update(start_steps + step)
     
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()

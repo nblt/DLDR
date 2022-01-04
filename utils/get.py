@@ -643,16 +643,7 @@ def get_outdir(path, *paths, inc=False):
 
 def get_exp_name(args, prefix=''):
     exp_name = "tmp"
-    if "sgd" in prefix:
-        exp_name = '-'.join([
-            prefix,
-            args.datasets,
-            args.arch,
-            str(args.batch_size),
-            str(args.lr),
-            datetime.now().strftime("%Y%m%d-%H%M%S")
-        ])
-    elif "psgd" in prefix:
+    if "psgd" in prefix:
         exp_name = '-'.join([
             prefix,
             args.datasets,
@@ -660,6 +651,15 @@ def get_exp_name(args, prefix=''):
             str(args.batch_size),
             str(args.lr),
             str(args.n_components),
+            datetime.now().strftime("%Y%m%d-%H%M%S")
+        ])
+    elif "sgd" in prefix:
+        exp_name = '-'.join([
+            prefix,
+            args.datasets,
+            args.arch,
+            str(args.batch_size),
+            str(args.lr),
             datetime.now().strftime("%Y%m%d-%H%M%S")
         ])
     elif "pbfgs" in prefix:

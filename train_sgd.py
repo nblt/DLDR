@@ -84,6 +84,7 @@ def main():
     # Check the save_dir exists or not
     exp_name = utils.get_exp_name(args, prefix='sgd')
     output_dir = utils.get_outdir(args.save_dir if args.save_dir else './output', exp_name)
+    print(f"save at {output_dir}")
     utils.dump_args(args, output_dir)
     logFilename = os.path.join(output_dir, "train.log")
     utils.console_out(logFilename)

@@ -5,6 +5,8 @@ import torch
 from torch._six import inf
 from pathlib import Path
 
+from torch.nn.modules import loss
+
 from .dist import save_on_master
 
 def get_model_param_vec(model):
@@ -83,18 +85,26 @@ def accuracy(output, target, topk=(1,)):
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
-def save_model(args, epoch, output_dir, model_without_ddp, optimizer, loss_scaler):
+def save_model(args, epoch, output_dir, model_without_ddp, optimizer, loss_scaler=None):
     output_dir = Path(output_dir)
     epoch_name = str(epoch)
     checkpoint_paths = [output_dir / ('checkpoint-%s.pth' % epoch_name)]
     for checkpoint_path in checkpoint_paths:
-        to_save = {
-            'model': model_without_ddp.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'epoch': epoch,
-            'scaler': loss_scaler.state_dict(),
-            'args': args,
-        }
+        if loss_scaler is not None:
+            to_save = {
+                'model': model_without_ddp.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'epoch': epoch,
+                'scaler': loss_scaler.state_dict(),
+                'args': args,
+            }
+        else:
+            to_save = {
+                'model': model_without_ddp.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'epoch': epoch,
+                'args': args,
+            }
 
         save_on_master(to_save, checkpoint_path)
 

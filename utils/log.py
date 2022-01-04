@@ -30,7 +30,7 @@ def console_out(logFilename):
     # Create an instance
     logging.getLogger().addHandler(console)           # 实例化添加handler
 
-def log_dump_metrics(**metrics):
+def log_dump_metrics(output_dir, **metrics):
     for name, nums in metrics.items():
         logging.info(f'{name}: {nums}')
-        np.save(f'{name}.npy', nums)
+        np.save(os.path.join(output_dir, f'{name}.npy'), nums)

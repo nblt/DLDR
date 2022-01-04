@@ -100,6 +100,7 @@ def main():
     # Check the save_dir exists or not
     exp_name = utils.get_exp_name(args, prefix='psgd')
     output_dir = utils.get_outdir(args.save_dir if args.save_dir else './output', exp_name)
+    print(f"save at {output_dir}")
     utils.dump_args(args, output_dir)
     logFilename = os.path.join(output_dir, "train.log")
     utils.console_out(logFilename)
@@ -114,7 +115,8 @@ def main():
                             "Metrics not being logged to wandb, try `pip install wandb`")
     
     # Define model
-    model = torch.nn.DataParallel(utils.get_model(args))
+    model = utils.get_model(args)
+    model = torch.nn.DataParallel(model)
     model.cuda()
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
@@ -145,7 +147,7 @@ def main():
 
     # Resume from params_start
     model.load_state_dict(torch.load(os.path.join(args.pretrain_dir,  str(args.params_start) +  '.pt')))
-
+    # model = torch.nn.DataParallel(model)
     # Prepare Dataloader
     train_loader, val_loader = utils.get_datasets(args)
     
@@ -210,7 +212,7 @@ def main():
 
     logging.info(f'total time: {time.time() - end}')
     logging.info(f'best_prec1: {best_prec1}')
-    utils.log_dump_metrics(
+    utils.log_dump_metrics(output_dir=output_dir,
         train_loss=train_loss, train_acc=train_acc, 
         test_loss=test_loss, test_acc=test_acc
     )   
