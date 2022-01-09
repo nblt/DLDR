@@ -198,8 +198,8 @@ def get_datasets(args):
             num_workers=args.workers, pin_memory=True)
 
     elif args.datasets == 'ImageNet':
-        traindir = os.path.join('/home/datasets/ILSVRC2012/', 'train')
-        valdir = os.path.join('/home/datasets/ILSVRC2012/', 'val')
+        traindir = os.path.join('/home/pami/Datasets/ILSVRC2012/', 'train')
+        valdir = os.path.join('/home/pami/Datasets/ILSVRC2012/', 'val')
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                         std=[0.229, 0.224, 0.225])
 
@@ -433,8 +433,8 @@ def get_datasets_ddp(args):
         ]))
 
     elif args.datasets == 'ImageNet':
-        traindir = os.path.join('/home/datasets/ILSVRC2012/', 'train')
-        valdir = os.path.join('/home/datasets/ILSVRC2012/', 'val')
+        traindir = os.path.join('/home/pami/Datasets/ILSVRC2012/', 'train')
+        valdir = os.path.join('/home/pami/Datasets/ILSVRC2012/', 'val')
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                         std=[0.229, 0.224, 0.225])
 

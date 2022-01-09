@@ -67,12 +67,10 @@ parser.add_argument('--params_start', default=0, type=int, metavar='N',
                     help='which epoch start for PCA') 
 parser.add_argument('--params_end', default=51, type=int, metavar='N',
                     help='which epoch end for PCA') 
-parser.add_argument('--alpha', default=0, type=float, metavar='N',
-                    help='lr for momentum') 
 parser.add_argument('--lr', default=1, type=float, metavar='N',
                     help='lr for PSGD') 
-parser.add_argument('--gamma', default=0.9, type=float, metavar='N',
-                    help='gamma for momentum')
+parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
+                    help='momentum')
 parser.add_argument('--randomseed', 
                     help='Randomseed for training and initialization',
                     type=int, default=1)
@@ -117,6 +115,7 @@ def main():
     
     # Define model
     model = utils.get_model(args)
+    model = torch.nn.DataParallel(model)
     model.cuda()
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
@@ -142,14 +141,14 @@ def main():
     P = torch.from_numpy(P).cuda()
 
     # Resume from params_start
-    model.load_state_dict(torch.load(os.path.join(args.pretrain_dir,  str(0) +  '.pt')))
+    model.load_state_dict(torch.load(os.path.join(args.pretrain_dir, str(0) + '.pt')))
     param0 = torch.from_numpy(utils.get_model_param_vec(model)).cuda()
 
     del model
 
     # Build reparameterize model
     model = utils.get_model(args)
-    reparam_model = reparam_model_v1(model, param0, args.n_components, P)
+    reparam_model = reparam_model_v1(model=model, param0=param0, n_components=args.n_components, P=P)
     reparam_model = torch.nn.DataParallel(reparam_model)
     reparam_model.cuda()
     logging.info("Reparam Model = %s" % str(reparam_model))
@@ -167,7 +166,7 @@ def main():
 
     cudnn.benchmark = True
 
-    optimizer = optim.SGD(reparam_model.module.get_param(), lr=args.lr, momentum=0.9)
+    optimizer = optim.SGD(reparam_model.module.get_param(), lr=args.lr, momentum=args.momentum)
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[30, 50], last_epoch=args.start_epoch - 1)
 
     logging.info(f'Start training: {args.start_epoch} -> {args.epochs}')

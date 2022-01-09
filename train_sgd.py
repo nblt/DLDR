@@ -214,7 +214,7 @@ def main():
 
     logging.info(f'total time: {time.time() - end}')
     logging.info(f'best_prec1: {best_prec1}')
-    utils.log_dump_metrics(
+    utils.log_dump_metrics(output_dir=output_dir,
         train_loss=train_loss, train_acc=train_acc, 
         test_loss=test_loss, test_acc=test_acc
     )

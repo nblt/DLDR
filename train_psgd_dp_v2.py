@@ -19,6 +19,7 @@ import numpy as np
 from numpy import linalg as LA
 import pickle
 import random
+from model_dldr import reparam_model_v2
 import resnet
 
 import utils
@@ -66,14 +67,10 @@ parser.add_argument('--params_start', default=0, type=int, metavar='N',
                     help='which epoch start for PCA') 
 parser.add_argument('--params_end', default=51, type=int, metavar='N',
                     help='which epoch end for PCA') 
-parser.add_argument('--dldr_start', default=-1, type=int, metavar='N',
-                    help='which epoch start dldr train') 
-parser.add_argument('--alpha', default=0, type=float, metavar='N',
-                    help='lr for momentum') 
 parser.add_argument('--lr', default=1, type=float, metavar='N',
                     help='lr for PSGD') 
-parser.add_argument('--gamma', default=0.9, type=float, metavar='N',
-                    help='gamma for momentum')
+parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
+                    help='momentum')
 parser.add_argument('--randomseed', 
                     help='Randomseed for training and initialization',
                     type=int, default=1)
@@ -100,7 +97,7 @@ def main():
     utils.set_random_seed(args.randomseed)
 
     # Check the save_dir exists or not
-    exp_name = utils.get_exp_name(args, prefix='psgd')
+    exp_name = utils.get_exp_name(args, prefix='psgd_ddp_v2')
     output_dir = utils.get_outdir(args.save_dir if args.save_dir else './output', exp_name)
     print(f"save at {output_dir}")
     utils.dump_args(args, output_dir)
@@ -119,40 +116,79 @@ def main():
     # Define model
     model = utils.get_model(args)
     model = torch.nn.DataParallel(model)
-    model.cuda()
+    # model.cuda()
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-    logging.info("Model = %s" % str(model))
-    logging.info('number of params: {} M'.format(n_parameters / 1e6))
 
     # Load sampled model parameters
     logging.info(f'params: from {args.params_start} to {args.params_end}')
-    W = []
+    # group1: other than linear , group2: linear
+    group_W = [[], []]
     for i in range(args.params_start, args.params_end):
         ############################################################################
         # if i % 2 != 0: continue
 
-        model.load_state_dict(torch.load(os.path.join(args.pretrain_dir,  str(i) +  '.pt')))
-        W.append(utils.get_model_param_vec(model))
-    W = np.array(W)
-    logging.info(f'W: {W.shape}')
+        model.load_state_dict(torch.load(os.path.join(args.pretrain_dir, str(i) + '.pt')))
+        vec = [[], []]
+        for name, param in model.named_parameters():
+            if "linear" in name or "fc" in name:
+                vec[1].append(param.detach().cpu().numpy().reshape(-1))
+            else:
+                vec[0].append(param.detach().cpu().numpy().reshape(-1))
 
-    # Obtain base variables through PCA
-    pca = PCA(n_components=args.n_components)
-    pca.fit_transform(W)
-    P = np.array(pca.components_)
-    np.save(os.path.join(output_dir, f"P_{args.params_start}_{args.params_end}_{args.n_components}.npy"), P)
-    logging.info(f'ratio: {pca.explained_variance_ratio_}')
-    logging.info(f'P: {P.shape}')
+        for i, v in enumerate(vec):
+            group_W[i].append(np.concatenate(v, 0))
+    
+    group_P = []
+    group_n_components = []
+    for i, W in enumerate(group_W):
+        logging.info(f"group {i}")
+        W = np.array(W)
+        logging.info(f'W: {W.shape}')
 
-    P = torch.from_numpy(P).cuda()
+        group_n_components.append(args.n_components)
+        # Obtain base variables through PCA
+        pca = PCA(n_components=args.n_components)
+        pca.fit_transform(W)
+        P = np.array(pca.components_)
+        # np.save(os.path.join(output_dir, f"P_{args.params_start}_{args.params_end}_{args.n_components}.npy"), P)
+        logging.info(f'ratio: {pca.explained_variance_ratio_}')
+        logging.info(f'P: {P.shape}')
+        P = torch.from_numpy(P).cuda()
+        group_P.append(P)
 
     # Resume from params_start
-    if args.dldr_start < 0:
-        model.load_state_dict(torch.load(os.path.join(args.pretrain_dir,  str(args.params_start) +  '.pt')))
-    else:
-        model.load_state_dict(torch.load(os.path.join(args.pretrain_dir,  str(args.dldr_start) +  '.pt')))
-    # model = torch.nn.DataParallel(model)
+    model.load_state_dict(torch.load(os.path.join(args.pretrain_dir, str(0) + '.pt')))
+
+    group_param0 = [[], []]
+    for name, param in model.named_parameters():
+        if "linear" in name or "fc" in name:
+            group_param0[1].append(param.detach().cpu().numpy().reshape(-1))
+        else:
+            group_param0[0].append(param.detach().cpu().numpy().reshape(-1))
+    group_param0[0] = torch.from_numpy(np.concatenate(group_param0[0], 0)).cuda()
+    group_param0[1] = torch.from_numpy(np.concatenate(group_param0[1], 0)).cuda()
+
+    del model
+
+    # Build reparameterize model
+    model = utils.get_model(args)
+    group_params = [[], []]
+    other_params = []
+    for name, p in model.named_parameters():
+        if "linear" in name or "fc" in name:
+            group_params[1].append(p)
+        else:
+            group_params[0].append(p)
+
+    reparam_model = reparam_model_v2(model=model, param0=group_param0, n_components=group_n_components, 
+                                     group_params=group_params, other_params=other_params, P=group_P)
+
+    reparam_model = torch.nn.DataParallel(reparam_model)
+    reparam_model.cuda()
+    logging.info("Reparam Model = %s" % str(reparam_model))
+    logging.info('number of params: {} M'.format(n_parameters / 1e6))
+    logging.info(f'n components = {args.n_components}')
+
     # Prepare Dataloader
     train_loader, val_loader = utils.get_datasets(args)
     
@@ -164,25 +200,28 @@ def main():
 
     cudnn.benchmark = True
 
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9)
-    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
-                                                        milestones=[30, 50], last_epoch=args.start_epoch - 1)
+    if len(other_params):
+        optimizer = optim.SGD([
+            {'params': reparam_model.module.get_param()},
+            {'params': other_params, 'lr': args.lr, 'momentum': args.momentum}], 
+            lr=args.lr, 
+            momentum=args.momentum)
+    else:
+        optimizer = optim.SGD(reparam_model.module.get_param(), lr=args.lr, momentum=args.momentum)
 
-    if args.evaluate:
-        validate(val_loader, model, criterion)
-        return
+    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[30, 50], last_epoch=args.start_epoch - 1)
 
     logging.info(f'Start training: {args.start_epoch} -> {args.epochs}')
     end = time.time()
     for epoch in range(args.start_epoch, args.epochs):
 
         # train for one epoch
-        train_stats, train_epoch_loss, train_epoch_acc = train(args, train_loader, model, P, criterion, optimizer, epoch)
+        train_stats, train_epoch_loss, train_epoch_acc = train(args, train_loader, reparam_model, criterion, optimizer, epoch)
         # Bk = torch.eye(args.n_components).cuda()
         lr_scheduler.step()
 
         # evaluate on validation set
-        val_stats, prec1, test_epoch_loss, test_epoch_acc = validate(args, val_loader, model, criterion, epoch)
+        val_stats, prec1, test_epoch_loss, test_epoch_acc = validate(args, val_loader, reparam_model, criterion, epoch)
 
         train_loss.append(train_epoch_loss)
         train_acc.append(train_epoch_acc)
@@ -224,7 +263,7 @@ def main():
 
     torch.save(model.state_dict(), os.path.join(output_dir, 'PSGD.pt'))
 
-def train(args, train_loader, model, P, criterion, optimizer, epoch):
+def train(args, train_loader, model, criterion, optimizer, epoch):
     # Run one train epoch
     
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -247,13 +286,15 @@ def train(args, train_loader, model, P, criterion, optimizer, epoch):
         loss = criterion(output, target_var)
 
         # Compute gradient and do SGD step
+        model.module.model.zero_grad()
         optimizer.zero_grad()
         loss.backward()
+        model.module.update_low_dim_grad()
 
-        # Do P_plus_BFGS update
-        grad = utils.get_model_grad_vec(model)
-        P_SGD(model, optimizer, grad, P)
+        optimizer.step()
 
+        output = output.float()
+        loss = loss.float()
         # Measure accuracy and record loss
         prec1 = utils.accuracy(output.data, target)[0]
         metric_logger.update(train_loss=loss.item())

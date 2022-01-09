@@ -84,22 +84,31 @@ class low_dim_linear_model_v2(nn.Module):
 class reparam_model_v2(nn.Module):
 
     def __init__(self, model: nn.Module, 
-                 param0: list, 
-                 n_components: list, 
+                 param0, 
+                 n_components: list or int, 
                  group_params: list = None, 
                  other_params: list = None, 
-                 P: list = None):
+                 P = None):
         super().__init__()
-        assert len(group_params) == len(n_components) == len(P), f"Wrong match group lengths of group_params:{len(group_params)}, n_components:{len(n_components)}, P:{len(P)}"
-        self.n_group = len(n_components)
+        if isinstance(n_components, list):
+            assert len(group_params) == len(n_components) == len(P), f"Wrong match group lengths of group_params:{len(group_params)}, n_components:{len(n_components)}, P:{len(P)}"
+            self.n_group = len(n_components)
+            self.group_params = group_params
+            self.other_params = other_params
+            self.param0 = param0
+            self.n_components = n_components
+            self.P = P
         
+        elif isinstance(n_components, int):
+            self.n_group = 1
+            self.group_params = [[p for p in model.parameters()]]
+            self.other_params = []
+            self.param0 = [param0]
+            self.n_components = [n_components]
+            self.P = [P]
+
         self.model = model 
-        self.group_params = group_params
-        self.other_params = other_params
-        self.param0 = param0
-        self.n_components = n_components
-        self.P = P
-        self.low_dim_linear_model = low_dim_linear_model_v2(n_components)
+        self.low_dim_linear_model = low_dim_linear_model_v2(self.n_components)
 
     def update_model_param(self, model_param):
         for n in range(self.n_group):
@@ -117,7 +126,8 @@ class reparam_model_v2(nn.Module):
     def forward(self, x):
         assert self.P is not None, "there is no transformation"
         low_param = self.low_dim_linear_model(self.P)
-        # print(low_param, self.param0)
+        # print("low_param", low_param)
+        # print("param0", self.param0)
         model_param = [self.param0[n] + low_param[n] for n in range(self.n_group)]
         self.update_model_param(model_param)
 
@@ -144,6 +154,7 @@ class reparam_model_v2(nn.Module):
         for weight in self.low_dim_linear_model.parameters():
             weight.grad = torch.cat(grad_vec, 0).transpose(0, 1)
 
+# for test
 class fn(nn.Module):
 
     def __init__(self):
@@ -164,37 +175,38 @@ if __name__ == "__main__":
     print("Model = %s" % str(model))
     print('number of params: {}'.format(n_parameters))
     
-    all_params = model.parameters()
-    weight_params = [[], []]
-    other_params = []
+    # all_params = model.parameters()
+    # weight_params = [[], []]
+    # other_params = []
 
-    for pname, p in model.named_parameters():
-        if '0' in pname:
-            weight_params[0].append(p)
-        elif '1' in pname:
-            weight_params[1].append(p)
-        else:
-            other_params.append(p)
+    # for pname, p in model.named_parameters():
+    #     if '0' in pname:
+    #         weight_params[0].append(p)
+    #     elif '1' in pname:
+    #         weight_params[1].append(p)
+    #     else:
+    #         other_params.append(p)
 
-    P = []
-    n_components = [2, 2]
-    for i, g in enumerate(weight_params):
-        num = sum(p.numel() for p in g)
-        P.append(torch.rand((n_components[i], num)))
+    # P = []
+    # n_components = [2, 2]
+    # for i, g in enumerate(weight_params):
+    #     num = sum(p.numel() for p in g)
+    #     P.append(torch.rand((n_components[i], num)))
 
-    print("P", P)
+    # print("P", P)
 
-    param0 = []
-    for i, g in enumerate(weight_params):
-        vec = []
-        for param in g:
-            vec.append(param.detach().cpu().reshape(-1))
-        param0.append(torch.concat(vec, 0))
-    # param0 = torch.from_numpy(utils.get_model_param_vec(model))
+    # param0 = []
+    # for i, g in enumerate(weight_params):
+    #     vec = []
+    #     for param in g:
+    #         vec.append(param.detach().cpu().reshape(-1))
+    #     param0.append(torch.concat(vec, 0))
+    
+    param0 = torch.from_numpy(utils.get_model_param_vec(model))
     print("param0", param0)
 
-    reparam_model = reparam_model_v2(model, param0, n_components, weight_params, other_params, P)
-
+    # reparam_model = reparam_model_v2(model, param0, n_components, weight_params, other_params, P)
+    reparam_model = reparam_model_v2(model=model, param0=param0, n_components=3, P=torch.rand((3, n_parameters)))
     input = torch.rand(3)
     output = reparam_model(input)
     output.backward()

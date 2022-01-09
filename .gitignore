@@ -4,3 +4,5 @@ wandb/
 plot/
 playground.py 
 playground2.py
+save_resnet18/
+*.tar
