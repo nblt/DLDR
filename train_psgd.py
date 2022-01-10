@@ -68,12 +68,11 @@ parser.add_argument('--params_end', default=51, type=int, metavar='N',
                     help='which epoch end for PCA') 
 parser.add_argument('--dldr_start', default=-1, type=int, metavar='N',
                     help='which epoch start dldr train') 
-parser.add_argument('--alpha', default=0, type=float, metavar='N',
-                    help='lr for momentum') 
+
 parser.add_argument('--lr', default=1, type=float, metavar='N',
                     help='lr for PSGD') 
-parser.add_argument('--gamma', default=0.9, type=float, metavar='N',
-                    help='gamma for momentum')
+parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
+                    help='momentum')
 parser.add_argument('--randomseed', 
                     help='Randomseed for training and initialization',
                     type=int, default=1)
@@ -164,7 +163,7 @@ def main():
 
     cudnn.benchmark = True
 
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9)
+    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
                                                         milestones=[30, 50], last_epoch=args.start_epoch - 1)
 

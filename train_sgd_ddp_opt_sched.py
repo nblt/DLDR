@@ -30,7 +30,7 @@ except ImportError:
 # Parse arguments
 parser = argparse.ArgumentParser(description='Regular training and sampling for DLDR')
 # arch
-parser.add_argument('--arch', '-a', metavar='ARCH',
+parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet20',
                     help='The architecture of the model')
 # dataset
 parser.add_argument('--datasets', metavar='DATASETS', default='CIFAR10', type=str,
@@ -98,7 +98,7 @@ parser.add_argument('--decay_rate', '--dr', type=float, default=0.1, metavar='RA
                     help='LR decay rate (default: 0.1)')
 
 
-parser.add_argument('--epochs', default=200, type=int, metavar='N',
+parser.add_argument('--epochs', default=150, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -180,7 +180,7 @@ def main():
     
     if utils.is_main_process():
         # Check the save_dir exists or not
-        exp_name = utils.get_exp_name(args, prefix='sgd_ddp')
+        exp_name = utils.get_exp_name(args, prefix='sgd_ddp_opt_sched')
         output_dir = utils.get_outdir(args.save_dir if args.save_dir else './output', exp_name)
         print(f"save at {output_dir}")
         utils.dump_args(args, output_dir)

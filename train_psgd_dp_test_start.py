@@ -93,13 +93,12 @@ def main():
     P = None
     # Record training statistics
     best_prec1 = 0
-    train_acc, test_acc, train_loss, test_loss = [], [], [], []
 
     args = parser.parse_args()
     utils.set_random_seed(args.randomseed)
 
     # Check the save_dir exists or not
-    exp_name = utils.get_exp_name(args, prefix='psgd_ddp')
+    exp_name = utils.get_exp_name(args, prefix='psgd_test_start_3')
     output_dir = utils.get_outdir(args.save_dir if args.save_dir else './output', exp_name)
     print(f"save at {output_dir}")
     utils.dump_args(args, output_dir)
@@ -117,7 +116,7 @@ def main():
     
     # Define model
     model = utils.get_model(args)
-    # model = torch.nn.DataParallel(model)
+    model = torch.nn.DataParallel(model)
     model.cuda()
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
@@ -137,7 +136,7 @@ def main():
     pca = PCA(n_components=args.n_components)
     pca.fit_transform(W)
     P = np.array(pca.components_)
-    np.save(os.path.join(output_dir, f"P_{args.params_start}_{args.params_end}_{args.n_components}.npy"), P)
+    # np.save(os.path.join(output_dir, f"P_{args.params_start}_{args.params_end}_{args.n_components}.npy"), P)
     logging.info(f'ratio: {pca.explained_variance_ratio_}')
     logging.info(f'P: {P.shape}')
     P = torch.from_numpy(P).cuda()
@@ -151,15 +150,6 @@ def main():
 
     del model
 
-    # Build reparameterize model
-    model = utils.get_model(args)
-    reparam_model = reparam_model_v1(model=model, param0=param0, n_components=args.n_components, P=P)
-    reparam_model = torch.nn.DataParallel(reparam_model)
-    reparam_model.cuda()
-    logging.info("Reparam Model = %s" % str(reparam_model))
-    logging.info('number of params: {} M'.format(n_parameters / 1e6))
-    logging.info(f'n components = {args.n_components}')
-
     # Prepare Dataloader
     train_loader, val_loader = utils.get_datasets(args)
     
@@ -170,61 +160,53 @@ def main():
         criterion.half()
 
     cudnn.benchmark = True
+    best = []
+    for i in range(4):
+        best_prec1 = 0
+        # Build reparameterize model
+        model = utils.get_model(args)
+        if i == 0:
+            param0 = torch.mm(P.T, torch.mm(P, param0.unsqueeze(1))).squeeze()
+        else:
+            param0 = torch.from_numpy(utils.get_model_param_vec(model)).cuda()
 
-    optimizer = optim.SGD(reparam_model.module.get_param(), lr=args.lr, momentum=args.momentum)
-    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[30, 50], last_epoch=args.start_epoch - 1)
+        reparam_model = reparam_model_v1(model=model, param0=param0, n_components=args.n_components, P=P)
+        reparam_model = torch.nn.DataParallel(reparam_model)
+        reparam_model.cuda()
+        logging.info("Reparam Model = %s" % str(reparam_model))
+        logging.info('number of params: {} M'.format(n_parameters / 1e6))
+        logging.info(f'n components = {args.n_components}')
 
-    logging.info(f'Start training: {args.start_epoch} -> {args.epochs}')
-    end = time.time()
-    for epoch in range(args.start_epoch, args.epochs):
+        optimizer = optim.SGD(reparam_model.module.get_param(), lr=args.lr, momentum=args.momentum)
+        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[30, 50], last_epoch=args.start_epoch - 1)
 
-        # train for one epoch
-        train_stats, train_epoch_loss, train_epoch_acc = train(args, train_loader, reparam_model, criterion, optimizer, epoch)
-        # Bk = torch.eye(args.n_components).cuda()
-        lr_scheduler.step()
+        logging.info(f'Start training: {args.start_epoch} -> {args.epochs}')
+        end = time.time()
+        for epoch in range(args.start_epoch, args.epochs):
 
-        # evaluate on validation set
-        val_stats, prec1, test_epoch_loss, test_epoch_acc = validate(args, val_loader, reparam_model, criterion, epoch)
+            # train for one epoch
+            train_stats, train_epoch_loss, train_epoch_acc = train(args, train_loader, reparam_model, criterion, optimizer, epoch)
+            # Bk = torch.eye(args.n_components).cuda()
+            lr_scheduler.step()
 
-        train_loss.append(train_epoch_loss)
-        train_acc.append(train_epoch_acc)
-        test_loss.append(test_epoch_loss)
-        test_acc.append(test_epoch_acc)
+            # evaluate on validation set
+            val_stats, prec1, test_epoch_loss, test_epoch_acc = validate(args, val_loader, reparam_model, criterion, epoch)
 
-        # log metrics to wandb
-        log_stats = {'epoch': epoch, 'n_parameters': n_parameters}
-        log_stats = dict(train_stats.items() | val_stats.items() | log_stats.items())
-        if has_wandb and args.log_wandb:
-            wandb.log(log_stats)
+            # log metrics to wandb
+            log_stats = {'epoch': epoch, 'n_parameters': n_parameters}
+            log_stats = dict(train_stats.items() | val_stats.items() | log_stats.items())
+            if has_wandb and args.log_wandb:
+                wandb.log(log_stats)
 
-        # Remember best prec@1 and save checkpoint
-        is_best = prec1 > best_prec1
-        best_prec1 = max(prec1, best_prec1)
-        logging.info(f"\033[0;36m @best prec1: {best_prec1} \033[0m")
+            # Remember best prec@1 and save checkpoint
+            is_best = prec1 > best_prec1
+            best_prec1 = max(prec1, best_prec1)
+            logging.info(f"\033[0;36m @best prec1: {best_prec1} \033[0m")
 
-        if epoch > 0 and epoch % args.save_every == 0 or epoch == args.epochs - 1:
-            utils.save_checkpoint({
-                'epoch': epoch + 1,
-                'state_dict': model.state_dict(),
-                'best_prec1': best_prec1,
-            }, is_best, filename=os.path.join(output_dir, 'checkpoint_refine_' + str(epoch+1) + '.th'))
-
-        utils.save_checkpoint({
-            'state_dict': model.state_dict(),
-            'best_prec1': best_prec1,
-        }, is_best, filename=os.path.join(output_dir, 'model.th'))
-
-        # DLDR sampling
-        torch.save(model.state_dict(), os.path.join(output_dir,  str(epoch + 1) +  '.pt'))
-
-    logging.info(f'total time: {time.time() - end}')
-    logging.info(f'best_prec1: {best_prec1}')
-    utils.log_dump_metrics(output_dir=output_dir,
-        train_loss=train_loss, train_acc=train_acc, 
-        test_loss=test_loss, test_acc=test_acc
-    )   
-
-    torch.save(model.state_dict(), os.path.join(output_dir, 'PSGD.pt'))
+        logging.info(f'total time: {time.time() - end}')
+        logging.info(f'best_prec1: {best_prec1}')
+        best.append(best_prec1)
+    logging.info(f"best: {best}")
 
 def train(args, train_loader, model, criterion, optimizer, epoch):
     # Run one train epoch

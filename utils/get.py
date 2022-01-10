@@ -643,7 +643,29 @@ def get_outdir(path, *paths, inc=False):
 
 def get_exp_name(args, prefix=''):
     exp_name = "tmp"
-    if "psgd" in prefix:
+    if "opt_sched" in prefix:
+        if args.warmup_epochs > 0:
+            exp_name = '-'.join([
+                prefix,
+                args.datasets,
+                args.arch,
+                str(args.batch_size),
+                str(args.lr),
+                args.opt, 
+                args.sched,
+                "warmup",
+            ])
+        else:
+            exp_name = '-'.join([
+                prefix,
+                args.datasets,
+                args.arch,
+                str(args.batch_size),
+                str(args.lr),
+                args.opt, 
+                args.sched,
+            ])
+    elif "psgd" in prefix:
         exp_name = '-'.join([
             prefix,
             args.datasets,
