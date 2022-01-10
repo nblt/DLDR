@@ -23,6 +23,7 @@ from model_dldr import reparam_model_v1
 import resnet
 
 import utils
+import timm.scheduler, timm.optim
 
 try:
     import wandb
@@ -69,10 +70,49 @@ parser.add_argument('--params_end', default=51, type=int, metavar='N',
                     help='which epoch end for PCA') 
 parser.add_argument('--dldr_start', default=-1, type=int, metavar='N',
                     help='which epoch start dldr train') 
+
+# Optimizer parameters
+parser.add_argument('--opt', default='momentum', type=str, metavar='OPTIMIZER',
+                    help='Optimizer (default: "momentum"')
 parser.add_argument('--lr', default=1, type=float, metavar='N',
-                    help='lr for PSGD') 
-parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
-                    help='momentum')
+                    help='Optimizer learning rate') 
+parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
+                    help='momentum (default: 0.9)')
+
+# Learning rate schedule parameters
+parser.add_argument('--sched', default='step', type=str, metavar='SCHEDULER',
+                    help='LR scheduler (default: "step"')
+parser.add_argument('--lr_noise', type=float, nargs='+', default=None, metavar='pct, pct',
+                    help='learning rate noise on/off epoch percentages')
+parser.add_argument('--lr_noise_pct', type=float, default=0.67, metavar='PERCENT',
+                    help='learning rate noise limit percent (default: 0.67)')
+parser.add_argument('--lr_noise_std', type=float, default=1.0, metavar='STDDEV',
+                    help='learning rate noise std-dev (default: 1.0)')
+parser.add_argument('--lr_cycle_mul', type=float, default=1.0, metavar='MULT',
+                    help='learning rate cycle len multiplier (default: 1.0)')
+parser.add_argument('--lr_cycle_decay', type=float, default=0.5, metavar='MULT',
+                    help='amount to decay each learning rate cycle (default: 0.5)')
+parser.add_argument('--lr_cycle_limit', type=int, default=1, metavar='N',
+                    help='learning rate cycle limit, cycles enabled if > 1')
+parser.add_argument('--lr_k_decay', type=float, default=1.0,
+                    help='learning rate k-decay for cosine/poly (default: 1.0)')
+parser.add_argument('--warmup_lr', type=float, default=0.0001, metavar='LR',
+                    help='warmup learning rate (default: 0.0001)')
+parser.add_argument('--min_lr', type=float, default=1e-6, metavar='LR',
+                    help='lower lr bound for cyclic schedulers that hit 0 (1e-5)')
+parser.add_argument('--epoch_repeats', type=float, default=0., metavar='N',
+                    help='epoch repeat multiplier (number of times to repeat dataset epoch per train epoch).')
+parser.add_argument('--decay_epochs', type=float, default=20, metavar='N',
+                    help='epoch interval to decay LR')
+parser.add_argument('--warmup_epochs', type=int, default=0, metavar='N',
+                    help='epochs to warmup LR, if scheduler supports')
+parser.add_argument('--cooldown_epochs', type=int, default=10, metavar='N',
+                    help='epochs to cooldown LR at min_lr, after cyclic schedule ends')
+parser.add_argument('--patience_epochs', type=int, default=10, metavar='N',
+                    help='patience epochs for Plateau LR scheduler (default: 10')
+parser.add_argument('--decay_rate', '--dr', type=float, default=0.1, metavar='RATE',
+                    help='LR decay rate (default: 0.1)')
+
 parser.add_argument('--randomseed', 
                     help='Randomseed for training and initialization',
                     type=int, default=1)
@@ -171,20 +211,41 @@ def main():
 
     cudnn.benchmark = True
 
-    optimizer = optim.SGD(reparam_model.module.get_param(), lr=args.lr, momentum=args.momentum)
-    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[30, 50], last_epoch=args.start_epoch - 1)
+    if args.opt == "momentum":
+        optimizer = optim.SGD(reparam_model.module.get_param(), lr=args.lr, momentum=args.momentum)
+    elif args.opt == "adam":
+        optimizer = optim.Adam(reparam_model.module.get_param(), lr=args.lr)
+    elif args.opt == "adamw":
+        optimizer = optim.AdamW(reparam_model.module.get_param(), lr=args.lr)
+    
+    # lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[30, 50], last_epoch=args.start_epoch - 1)
 
-    logging.info(f'Start training: {args.start_epoch} -> {args.epochs}')
+    lr_scheduler, num_epochs = timm.scheduler.create_scheduler(args, optimizer)
+    start_epoch = 0
+    if args.start_epoch is not None:
+        # a specified start_epoch will always override the resume epoch
+        start_epoch = args.start_epoch
+    if lr_scheduler is not None and start_epoch > 0:
+        lr_scheduler.step(start_epoch)
+    logging.info('Scheduled epochs: {}'.format(num_epochs))
+
+    logging.info(f'Start training: {start_epoch} -> {num_epochs}')
     end = time.time()
-    for epoch in range(args.start_epoch, args.epochs):
+    for epoch in range(start_epoch, num_epochs):
+
+        if args.sched == "onecycle" and lr_scheduler is not None:
+            lr_scheduler.step(epoch)
 
         # train for one epoch
-        train_stats, train_epoch_loss, train_epoch_acc = train(args, train_loader, reparam_model, criterion, optimizer, epoch)
+        train_stats, train_epoch_loss, train_epoch_acc = train(args, train_loader, reparam_model, criterion, optimizer, epoch, lr_scheduler)
         # Bk = torch.eye(args.n_components).cuda()
-        lr_scheduler.step()
 
         # evaluate on validation set
         val_stats, prec1, test_epoch_loss, test_epoch_acc = validate(args, val_loader, reparam_model, criterion, epoch)
+
+        if lr_scheduler is not None:
+                # step LR for next epoch
+                lr_scheduler.step(epoch + 1, val_stats["test_loss"])
 
         train_loss.append(train_epoch_loss)
         train_acc.append(train_epoch_acc)
@@ -226,7 +287,7 @@ def main():
 
     torch.save(model.state_dict(), os.path.join(output_dir, 'PSGD.pt'))
 
-def train(args, train_loader, model, criterion, optimizer, epoch):
+def train(args, train_loader, model, criterion, optimizer, epoch, lr_scheduler=None):
     # Run one train epoch
     
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -234,9 +295,11 @@ def train(args, train_loader, model, criterion, optimizer, epoch):
 
     # Switch to train mode
     model.train()
-
-    for i, (input, target) in enumerate(metric_logger.log_every(train_loader, args.print_freq, header)):
-
+    num_updates = epoch * len(train_loader)
+    for step, (input, target) in enumerate(metric_logger.log_every(train_loader, args.print_freq, header)):
+        
+        if lr_scheduler is not None:
+            lr_scheduler.step_frac(epoch + (step + 1) / len(train_loader))
         # Load batch data to cuda
         target = target.cuda()
         input_var = input.cuda()
@@ -258,12 +321,15 @@ def train(args, train_loader, model, criterion, optimizer, epoch):
 
         output = output.float()
         loss = loss.float()
+        num_updates += 1
         # Measure accuracy and record loss
         prec1 = utils.accuracy(output.data, target)[0]
         metric_logger.update(train_loss=loss.item())
         metric_logger.update(train_prec1=prec1.item())
         metric_logger.update(train_lr=optimizer.param_groups[0]['lr'])
 
+        if lr_scheduler is not None:
+            lr_scheduler.step_update(num_updates=num_updates, metric=metric_logger.meters['train_loss'].global_avg)
     # gather the stats from all processes
     # metric_logger.synchronize_between_processes()
     logging.info(f"Averaged train stats: {metric_logger}")    
@@ -302,7 +368,7 @@ def validate(args, val_loader, model, criterion, epoch):
     model.eval()
 
     with torch.no_grad():
-        for i, (input, target) in enumerate(metric_logger.log_every(val_loader, args.print_freq, header)):
+        for step, (input, target) in enumerate(metric_logger.log_every(val_loader, args.print_freq, header)):
             target = target.cuda()
             input_var = input.cuda()
             target_var = target.cuda()
