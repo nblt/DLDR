@@ -97,7 +97,7 @@ parser.add_argument('--patience_epochs', type=int, default=10, metavar='N',
 parser.add_argument('--decay_rate', '--dr', type=float, default=0.1, metavar='RATE',
                     help='LR decay rate (default: 0.1)')
 
-
+# training
 parser.add_argument('--epochs', default=200, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
@@ -116,6 +116,8 @@ parser.add_argument('--save_dir', default='save_temp', type=str,
                     help='The directory used to save the trained models')
 parser.add_argument('--save_every', type=int, default=10,
                     help='Saves checkpoints at every specified number of epochs')
+parser.add_argument('--step_sample_freq', type=int, default=50,
+                    help='frequency to sample model params in a mini-batch')
 parser.add_argument('--randomseed', type=int, default=1, 
                     help='Randomseed for training and initialization')
 parser.add_argument('--corrupt', default=0, type=float,
@@ -274,7 +276,7 @@ def main():
     logging.info("Batch size = %d" % total_batch_size)
     logging.info("Number of training steps = %d" % num_training_steps_per_epoch)
     logging.info("Number of training examples per epoch = %d" % (total_batch_size * num_training_steps_per_epoch))
-    logging.info(f'Start training: {args.start_epoch} -> {args.epochs}')
+    logging.info(f'Start training: {start_epoch} -> {num_epochs}')
     start_time = time.time()
     for epoch in range(start_epoch, num_epochs):
         if args.distributed and hasattr(data_loader_train.sampler, 'set_epoch'):
@@ -287,7 +289,8 @@ def main():
         train_stats, train_epoch_loss, train_epoch_acc = train(args, 
             data_loader_train, model, criterion, optimizer, epoch, 
             loss_scaler, device, args.clip_grad, 
-            start_steps=epoch * num_training_steps_per_epoch)
+            start_steps=epoch * num_training_steps_per_epoch, 
+            output_dir=output_dir)
 
         # evaluate on validation set
         val_stats, prec1, test_epoch_loss, test_epoch_acc = validate(args, 
@@ -336,12 +339,14 @@ def main():
 def train(args, train_loader: Iterable, model: torch.nn.Module, criterion, 
           optimizer: torch.optim.Optimizer, epoch: int, loss_scaler, 
           device: torch.device, max_norm: float=0, lr_scheduler=None, 
-          start_steps=None, lr_schedule_values=None, wd_schedule_values=None):
+          start_steps=None, lr_schedule_values=None, wd_schedule_values=None, 
+          output_dir=None):
     """
     Run one train epoch
     """
     # switch to train mode
     model.train() 
+    model_without_ddp = model.module
 
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Epoch: [{}]'.format(epoch)   
@@ -421,7 +426,13 @@ def train(args, train_loader: Iterable, model: torch.nn.Module, criterion,
         #     lr_scheduler.step_update(start_steps + step)
         if lr_scheduler is not None:
             lr_scheduler.step_update(num_updates=num_updates, metric=metric_logger.meters['train_loss'].global_avg)
-    
+
+        if output_dir is not None and (
+            step > 0 and step % args.step_sample_freq == 0 or step == len(train_loader) - 1
+            ) and utils.is_main_process():
+            # DLDR sampling
+            utils.sample_model(epoch=epoch+1, output_dir=output_dir, model_without_ddp=model_without_ddp, step=step+1)
+
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     logging.info(f"Averaged train stats: {metric_logger}")
