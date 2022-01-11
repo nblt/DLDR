@@ -85,10 +85,14 @@ def accuracy(output, target, topk=(1,)):
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
-def save_model(args, epoch, output_dir, model_without_ddp, optimizer, loss_scaler=None):
+def save_model(args, epoch, output_dir, model_without_ddp, optimizer, step=None, loss_scaler=None):
     output_dir = Path(output_dir)
     epoch_name = str(epoch)
-    checkpoint_paths = [output_dir / ('checkpoint-%s.pth' % epoch_name)]
+    if step is None:
+        checkpoint_paths = [output_dir / (f'checkpoint-{epoch_name}.pth')]
+    else:
+        step_name = str(step)
+        checkpoint_paths = [output_dir / (f'checkpoint-{epoch_name}-{step_name}.pth')]
     for checkpoint_path in checkpoint_paths:
         if loss_scaler is not None:
             to_save = {
@@ -108,10 +112,14 @@ def save_model(args, epoch, output_dir, model_without_ddp, optimizer, loss_scale
 
         save_on_master(to_save, checkpoint_path)
 
-def sample_model(epoch, output_dir, model_without_ddp):
+def sample_model(epoch, output_dir, model_without_ddp, step=None):
     output_dir = Path(output_dir)
     epoch_name = str(epoch)
-    checkpoint_path = output_dir / ('%s.pt' % epoch_name)
+    if step is None:
+        checkpoint_path = output_dir / (f'{epoch_name}.pt')
+    else:
+        step_name = str(step)
+        checkpoint_path = output_dir / (f'{epoch_name}-{step_name}.pt')
     save_on_master(model_without_ddp.state_dict(), checkpoint_path)
 
 def get_grad_norm_(parameters, norm_type: float = 2.0) -> torch.Tensor:

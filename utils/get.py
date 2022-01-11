@@ -673,6 +673,9 @@ def get_exp_name(args, prefix=''):
             str(args.batch_size),
             str(args.lr),
             str(args.n_components),
+            args.opt, 
+            args.sched,
+            args.sample_mode if args.sample_mode != "" else "epoch",
             datetime.now().strftime("%Y%m%d-%H%M%S")
         ])
     elif "sgd" in prefix:

@@ -38,7 +38,7 @@ parser.add_argument('--datasets', metavar='DATASETS', default='CIFAR10', type=st
                     help='The training datasets')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
-parser.add_argument('--epochs', default=100, type=int, metavar='N',
+parser.add_argument('--epochs', default=40, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -62,6 +62,13 @@ parser.add_argument('--pretrain_dir', default='save_temp', type=str,
                     help='The directory used to save the pretrained models')
 parser.add_argument('--save_every', type=int, default=10 ,
                     help='Saves checkpoints at every specified number of epochs')
+# DLDR sample setting 
+parser.add_argument('--sample_mode', default="", type=str ,
+                    help='the mode to sample parameters for pca')
+parser.add_argument('--sample_beta', type=float, default=0.8, metavar='M',
+                    help='beta for exp smooth sampling (default: 0.8)')
+parser.add_argument('--save_pca_p', dest='save_pca_p', action='store_true',
+                    help='save the pca transform matrix')
 parser.add_argument('--n_components', default=40, type=int, metavar='N',
                     help='n_components for PCA') 
 parser.add_argument('--params_start', default=0, type=int, metavar='N',
@@ -102,7 +109,7 @@ parser.add_argument('--min_lr', type=float, default=1e-6, metavar='LR',
                     help='lower lr bound for cyclic schedulers that hit 0 (1e-5)')
 parser.add_argument('--epoch_repeats', type=float, default=0., metavar='N',
                     help='epoch repeat multiplier (number of times to repeat dataset epoch per train epoch).')
-parser.add_argument('--decay_epochs', type=float, default=20, metavar='N',
+parser.add_argument('--decay_epochs', type=float, default=30, metavar='N',
                     help='epoch interval to decay LR')
 parser.add_argument('--warmup_epochs', type=int, default=0, metavar='N',
                     help='epochs to warmup LR, if scheduler supports')
@@ -156,33 +163,32 @@ def main():
                             "Metrics not being logged to wandb, try `pip install wandb`")
     
     # Define model
-    model = utils.get_model(args)
-    # model = torch.nn.DataParallel(model)
-    model.cuda()
-    n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    try:
+        model = utils.get_model(args)
+        # model = torch.nn.DataParallel(model)
+        model.cuda()
+        n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        
+        # Load sampled model parameters
+        W = utils.get_W(args, model, mode=args.sample_mode, beta=args.sample_beta)
+    except:
+        model = utils.get_model(args)
+        logging.info(f'use DataParallel to wrap model for sampling')
+        model = torch.nn.DataParallel(model)
+        model.cuda()
+        n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-    # Load sampled model parameters
-    logging.info(f'params: from {args.params_start} to {args.params_end}')
-    W = []
-    for i in range(args.params_start, args.params_end):
-        ############################################################################
-        # if i % 2 != 0: continue
-
-        model.load_state_dict(torch.load(os.path.join(args.pretrain_dir,  str(i) +  '.pt')))
-        W.append(utils.get_model_param_vec(model))
-    W = np.array(W)
-    logging.info(f'W: {W.shape}')
+        # Load sampled model parameters
+        W = utils.get_W(args, model, mode=args.sample_mode, beta=args.sample_beta)
 
     # Obtain base variables through PCA
-    pca = PCA(n_components=args.n_components)
-    pca.fit_transform(W)
-    P = np.array(pca.components_)
-    np.save(os.path.join(output_dir, f"P_{args.params_start}_{args.params_end}_{args.n_components}.npy"), P)
-    logging.info(f'ratio: {pca.explained_variance_ratio_}')
-    logging.info(f'P: {P.shape}')
+    if args.save_pca_p:
+        P, pca = utils.get_P(args, W, output_dir)
+    else:
+        P, pca = utils.get_P(args, W)
     P = torch.from_numpy(P).cuda()
 
-    # Resume from params_start
+    # Resume from params_start or selected dldr_start
     if args.dldr_start < 0:
         model.load_state_dict(torch.load(os.path.join(args.pretrain_dir,  str(args.params_start) +  '.pt')))
     else:
