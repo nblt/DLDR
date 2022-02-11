@@ -19,6 +19,9 @@ import utils
 from utils import NativeScalerWithGradNormCount as NativeScaler
 import model_dldr
 
+from PIL import Image, ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
 import timm.scheduler, timm.optim
 
 try:
@@ -180,6 +183,7 @@ def main():
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
     
+    output_dir = None
     if utils.is_main_process():
         # Check the save_dir exists or not
         exp_name = utils.get_exp_name(args, prefix='sgd_ddp')

@@ -1,6 +1,6 @@
 datasets=CIFAR10
 model=resnet20
-pretrain='output/CIFAR10/sgd_ddp_test_sample/sgd_ddp-CIFAR10-resnet20-128-0.1-20220110-141224'
+pretrain='output/sgd-CIFAR10-resnet20-128-0.1-20220102-161735'
 CUDA_VISIBLE_DEVICES=2 python -u train_psgd_dp.py \
     --epochs=40 \
     --arch=$model \

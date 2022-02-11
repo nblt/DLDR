@@ -13,6 +13,9 @@ import torch.utils.data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 
+from PIL import Image, ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
 from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import numpy as np
@@ -34,7 +37,7 @@ parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet32',
                     help='model architecture (default: resnet32)')
 parser.add_argument('--datasets', metavar='DATASETS', default='CIFAR10', type=str,
                     help='The training datasets')
-parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
+parser.add_argument('-j', '--workers', default=10, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 parser.add_argument('--epochs', default=100, type=int, metavar='N',
                     help='number of total epochs to run')
@@ -56,10 +59,18 @@ parser.add_argument('--half', dest='half', action='store_true',
                     help='use half-precision(16-bit) ')
 parser.add_argument('--save_dir', default='save_temp', type=str ,
                     help='The directory used to save training')
-parser.add_argument('--pretrain_dir', default='save_temp', type=str,
-                    help='The directory used to save the pretrained models')
 parser.add_argument('--save_every', type=int, default=10 ,
                     help='Saves checkpoints at every specified number of epochs')
+
+# DLDR sample setting 
+parser.add_argument('--pretrain_dir', default='save_temp', type=str,
+                    help='The directory used to save the pretrained models')
+parser.add_argument('--sample_mode', default="", type=str ,
+                    help='the mode to sample parameters for pca')
+parser.add_argument('--sample_beta', type=float, default=0.8, metavar='M',
+                    help='beta for exp smooth sampling (default: 0.8)')
+parser.add_argument('--save_pca_p', dest='save_pca_p', action='store_true',
+                    help='save the pca transform matrix')
 parser.add_argument('--n_components', default=40, type=int, metavar='N',
                     help='n_components for PCA') 
 parser.add_argument('--params_start', default=0, type=int, metavar='N',
@@ -69,6 +80,8 @@ parser.add_argument('--params_end', default=51, type=int, metavar='N',
 parser.add_argument('--dldr_start', default=-1, type=int, metavar='N',
                     help='which epoch start dldr train') 
 
+parser.add_argument('--opt', default='momentum', type=str, metavar='OPTIMIZER',
+                    help='Optimizer (default: "momentum"')
 parser.add_argument('--lr', default=1, type=float, metavar='N',
                     help='lr for PSGD') 
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
@@ -76,6 +89,8 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
 parser.add_argument('--randomseed', 
                     help='Randomseed for training and initialization',
                     type=int, default=1)
+parser.add_argument('--sched', default='step', type=str, metavar='SCHEDULER',
+                    help='LR scheduler (default: "step"')
 
 parser.add_argument('--corrupt', default=0, type=float,
                     metavar='c', help='noise level for training set')
@@ -116,23 +131,42 @@ def main():
                             "Metrics not being logged to wandb, try `pip install wandb`")
     
     # Define model
-    model = utils.get_model(args)
-    model = torch.nn.DataParallel(model)
-    model.cuda()
-    n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    try:
+        model = utils.get_model(args)
+        # model = torch.nn.DataParallel(model)
+        model.cuda()
+        n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-    logging.info("Model = %s" % str(model))
-    logging.info('number of params: {} M'.format(n_parameters / 1e6))
+        logging.info("Model = %s" % str(model))
+        logging.info('number of params: {} M'.format(n_parameters / 1e6))
 
-    # Load sampled model parameters
-    logging.info(f'params: from {args.params_start} to {args.params_end}')
-    W = []
-    for i in range(args.params_start, args.params_end):
-        ############################################################################
-        # if i % 2 != 0: continue
+        # Load sampled model parameters
+        logging.info(f'params: from {args.params_start} to {args.params_end}')
+        W = []
+        for i in range(args.params_start, args.params_end):
+            ############################################################################
+            # if i % 2 != 0: continue
 
-        model.load_state_dict(torch.load(os.path.join(args.pretrain_dir,  str(i) +  '.pt')))
-        W.append(utils.get_model_param_vec(model))
+            model.load_state_dict(torch.load(os.path.join(args.pretrain_dir,  str(i) +  '.pt')))
+            W.append(utils.get_model_param_vec(model))
+    except:
+        model = utils.get_model(args)
+        model = torch.nn.DataParallel(model)
+        model.cuda()
+        n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+        logging.info("Model = %s" % str(model))
+        logging.info('number of params: {} M'.format(n_parameters / 1e6))
+
+        # Load sampled model parameters
+        logging.info(f'params: from {args.params_start} to {args.params_end}')
+        W = []
+        for i in range(args.params_start, args.params_end):
+            ############################################################################
+            # if i % 2 != 0: continue
+
+            model.load_state_dict(torch.load(os.path.join(args.pretrain_dir,  str(i) +  '.pt')))
+            W.append(utils.get_model_param_vec(model))
     W = np.array(W)
     logging.info(f'W: {W.shape}')
 

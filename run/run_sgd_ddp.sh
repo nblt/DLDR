@@ -7,7 +7,7 @@ CUDA_VISIBLE_DEVICES=2 OMP_NUM_THREADS=1 python -m torch.distributed.launch --np
     --warmup_epochs=0 \
     --opt='momentum' \
     --lr=0.1 \
-    --sched='onecycle' \
+    --sched='step' \
     --batch_size=128 \
     --corrupt=$c \
     --arch=$model \

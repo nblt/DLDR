@@ -13,6 +13,9 @@ import torch.utils.data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 
+from PIL import Image, ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
 from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import numpy as np

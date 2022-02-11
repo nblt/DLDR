@@ -13,6 +13,9 @@ import torch.utils.data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 
+from PIL import Image, ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
 from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import numpy as np
@@ -113,6 +116,7 @@ def main():
             print("You've requested to log metrics to wandb but package not found. "
                             "Metrics not being logged to wandb, try `pip install wandb`")
     
+    # TODO: wrong process for DataParallel and different mode to sampling
     # Define model
     model = utils.get_model(args)
     model = torch.nn.DataParallel(model)
