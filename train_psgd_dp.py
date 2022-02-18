@@ -189,14 +189,14 @@ def main():
         P, pca = utils.get_P(args, W, output_dir)
     else:
         P, pca = utils.get_P(args, W)
-    P = torch.from_numpy(P).cuda()
+    P = torch.from_numpy(P)# .cuda()
 
     # Resume from params_start or selected dldr_start
     if args.dldr_start < 0:
         model.load_state_dict(torch.load(os.path.join(args.pretrain_dir,  str(args.params_start) +  '.pt')))
     else:
         model.load_state_dict(torch.load(os.path.join(args.pretrain_dir,  str(args.dldr_start) +  '.pt')))
-    param0 = torch.from_numpy(utils.get_model_param_vec(model)).cuda()
+    param0 = torch.from_numpy(utils.get_model_param_vec(model))# .cuda()
 
     del model
 

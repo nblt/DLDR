@@ -2,7 +2,7 @@ import os
 import logging 
 import numpy as np
 import torch 
-
+from tqdm import tqdm
 from sklearn.decomposition import PCA
 
 from .model import get_model_param_vec
@@ -16,7 +16,7 @@ def get_W(args, model, mode="", beta=0.8, step_times=10000):
     """
     W = []
     logging.info(f'params: from {args.params_start} to {args.params_end}')
-    for epoch in range(args.params_start, args.params_end):
+    for epoch in tqdm(range(args.params_start, args.params_end)):
         ############################################################################
         # if i % 2 != 0: continue
         if mode == "" or mode == "epoch":   

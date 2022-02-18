@@ -1,4 +1,5 @@
 import math
+from numpy import require
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -22,16 +23,17 @@ class low_dim_linear_model(nn.Module):
         self.param = nn.Parameter(torch.zeros((1, n_components)), requires_grad=True)
 
     def forward(self, P):
-        return torch.mm(self.param, P)
+        with torch.no_grad():
+            return torch.mm(self.param, P)
 
 class reparam_model_v1(nn.Module):
 
     def __init__(self, model, param0, n_components, P = None):
         super().__init__()
         self.model = model 
-        self.param0 = param0
+        self.param0 = nn.Parameter(param0, requires_grad=False)
         self.n_components = n_components
-        self.P = P
+        self.P = nn.Parameter(P, requires_grad=False)
         self.low_dim_linear_model = low_dim_linear_model(n_components)
 
     def update_model_param(self, param_vec):
@@ -46,23 +48,29 @@ class reparam_model_v1(nn.Module):
             param.data = assign_param
             idx += size
 
-    def forward(self, x):
-        assert self.P is not None, "there is no transformation"
-        low_param = self.low_dim_linear_model(self.P)[0]
-        # print(low_param, self.param0)
-        model_param = self.param0 + low_param
-        self.update_model_param(model_param)
+    def prepare_forward(self):
+        with torch.no_grad():
+            assert self.P is not None, "there is no transformation"
+            low_param = self.low_dim_linear_model(self.P)[0]
+            # print(f"low param:{low_param[:20]}, param0:{self.param0[:20]}")
+            # self.param0 = self.param0.to(device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
+            model_param = self.param0 + low_param
+            self.update_model_param(model_param)
 
+    def forward(self, x):
         return self.model(x)
 
     def get_param(self):
         return self.low_dim_linear_model.parameters()
 
     def update_low_dim_grad(self):
-        grad = utils.get_model_grad_vec(self.model)
-        gk = torch.mm(self.P, grad.reshape(-1,1))
-        for name, weight in self.low_dim_linear_model.named_parameters():
-            weight.grad = gk.transpose(0, 1)
+        with torch.no_grad():
+            grad = utils.get_model_grad_vec(self.model)
+            # print(f"grad: {grad[:20]}")
+            gk = torch.mm(self.P, grad.reshape(-1,1))
+            # print(f"gk: {gk.transpose(0, 1)[:20]}")
+            for name, weight in self.low_dim_linear_model.named_parameters():
+                weight.grad = gk.transpose(0, 1)
 
 class low_dim_linear_model_v2(nn.Module):
 
@@ -166,6 +174,51 @@ class fn(nn.Module):
         )
     def forward(self, x):
         return self.layer(x)
+
+class reparam_model_v3(nn.Module):
+    
+    def __init__(self, model, n_components):
+        super().__init__()
+        self.model = model 
+        # self.param0 = nn.Parameter(param0, requires_grad=False)
+        self.n_components = n_components
+        # self.P = nn.Parameter(P, requires_grad=False)
+        self.low_dim_linear_model = low_dim_linear_model(n_components)
+
+    def update_model_param(self, param_vec):
+        idx = 0
+        for name, param in self.model.named_parameters():
+            arr_shape = param.data.shape
+            size = 1
+            for i in range(len(list(arr_shape))):
+                size *= arr_shape[i]
+            assign_param = param_vec[idx:idx+size]
+            assign_param = assign_param.reshape(arr_shape)
+            param.data = assign_param
+            idx += size
+
+    def prepare_forward(self, P, param0):
+        with torch.no_grad():
+            low_param = self.low_dim_linear_model(P)[0]
+            # print(f"low param:{low_param[:20]}, param0:{self.param0[:20]}")
+            # self.param0 = self.param0.to(device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
+            model_param = param0 + low_param
+            self.update_model_param(model_param)
+
+    def forward(self, x):
+        return self.model(x)
+
+    def get_param(self):
+        return self.low_dim_linear_model.parameters()
+
+    def update_low_dim_grad(self, P):
+        with torch.no_grad():
+            grad = utils.get_model_grad_vec(self.model)
+            # print(f"grad: {grad[:20]}")
+            gk = torch.mm(P, grad.reshape(-1,1))
+            # print(f"gk: {gk.transpose(0, 1)[:20]}")
+            for name, weight in self.low_dim_linear_model.named_parameters():
+                weight.grad = gk.transpose(0, 1)
 
 if __name__ == "__main__":
 

@@ -10,3 +10,4 @@ from .log import console_out, dump_args, checkdir, log_dump_metrics
 from .dist import init_distributed_mode, get_rank, get_world_size, is_main_process
 from .optim import create_optimizer, cosine_scheduler
 from .pca import get_W, get_P
+from .data_parallel_my_v2 import BalancedDataParallel
