@@ -1,6 +1,5 @@
 import argparse
 import os
-import shutil
 import time
 import logging
 
@@ -10,20 +9,11 @@ import torch.nn.parallel
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
 import torch.utils.data
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
 
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-from sklearn.decomposition import PCA
-import matplotlib.pyplot as plt
-import numpy as np
-from numpy import linalg as LA
-import pickle
-import random
 from model_dldr import reparam_model_v1
-import resnet
 
 import utils
 import timm.scheduler, timm.optim
@@ -149,7 +139,7 @@ def main():
     utils.set_random_seed(args.randomseed)
 
     # Check the save_dir exists or not
-    exp_name = utils.get_exp_name(args, prefix='psgd_ddp')
+    exp_name = utils.get_exp_name(args, prefix='psgd_dp')
     output_dir = utils.get_outdir(args.save_dir if args.save_dir else './output', exp_name)
     print(f"save at {output_dir}")
     utils.dump_args(args, output_dir)
@@ -189,22 +179,21 @@ def main():
         P, pca = utils.get_P(args, W, output_dir)
     else:
         P, pca = utils.get_P(args, W)
-    P = torch.from_numpy(P)# .cuda()
+    P = torch.from_numpy(P).cuda()
 
     # Resume from params_start or selected dldr_start
     if args.dldr_start < 0:
         model.load_state_dict(torch.load(os.path.join(args.pretrain_dir,  str(args.params_start) +  '.pt')))
     else:
         model.load_state_dict(torch.load(os.path.join(args.pretrain_dir,  str(args.dldr_start) +  '.pt')))
-    param0 = torch.from_numpy(utils.get_model_param_vec(model))# .cuda()
+    param0 = torch.from_numpy(utils.get_model_param_vec(model)).cuda()
 
     del model
 
     # Build reparameterize model
     model = utils.get_model(args)
     reparam_model = reparam_model_v1(model=model, param0=param0, n_components=args.n_components, P=P)
-    reparam_model = torch.nn.DataParallel(reparam_model)
-    reparam_model.cuda()
+    reparam_model = torch.nn.DataParallel(reparam_model).cuda()
     logging.info("Reparam Model = %s" % str(reparam_model))
     logging.info('number of params: {} M'.format(n_parameters / 1e6))
     logging.info(f'n components = {args.n_components}')
@@ -232,7 +221,7 @@ def main():
     lr_scheduler, num_epochs = timm.scheduler.create_scheduler(args, optimizer)
     start_epoch = 0
     if args.start_epoch is not None:
-        # a specified start_epoch will always override the resume epoch
+        # A specified start_epoch will always override the resume epoch
         start_epoch = args.start_epoch
     if lr_scheduler is not None and start_epoch > 0:
         lr_scheduler.step(start_epoch)
@@ -245,15 +234,14 @@ def main():
         if args.sched == "onecycle" and lr_scheduler is not None:
             lr_scheduler.step(epoch)
 
-        # train for one epoch
+        # Train for one epoch
         train_stats, train_epoch_loss, train_epoch_acc = train(args, train_loader, reparam_model, criterion, optimizer, epoch, lr_scheduler)
-        # Bk = torch.eye(args.n_components).cuda()
 
-        # evaluate on validation set
+        # Evaluate on validation set
         val_stats, prec1, test_epoch_loss, test_epoch_acc = validate(args, val_loader, reparam_model, criterion, epoch)
 
         if lr_scheduler is not None:
-                # step LR for next epoch
+                # Step LR for next epoch
                 lr_scheduler.step(epoch + 1, val_stats["test_loss"])
 
         train_loss.append(train_epoch_loss)
@@ -261,7 +249,7 @@ def main():
         test_loss.append(test_epoch_loss)
         test_acc.append(test_epoch_acc)
 
-        # log metrics to wandb
+        # Log metrics to wandb
         log_stats = {'epoch': epoch, 'n_parameters': n_parameters}
         log_stats = dict(train_stats.items() | val_stats.items() | log_stats.items())
         if has_wandb and args.log_wandb:
@@ -271,18 +259,6 @@ def main():
         is_best = prec1 > best_prec1
         best_prec1 = max(prec1, best_prec1)
         logging.info(f"\033[0;36m @best prec1: {best_prec1} \033[0m")
-
-        if epoch > 0 and epoch % args.save_every == 0 or epoch == args.epochs - 1:
-            utils.save_checkpoint({
-                'epoch': epoch + 1,
-                'state_dict': model.state_dict(),
-                'best_prec1': best_prec1,
-            }, is_best, filename=os.path.join(output_dir, 'checkpoint_refine_' + str(epoch+1) + '.th'))
-
-        utils.save_checkpoint({
-            'state_dict': model.state_dict(),
-            'best_prec1': best_prec1,
-        }, is_best, filename=os.path.join(output_dir, 'model.th'))
 
         # DLDR sampling
         torch.save(model.state_dict(), os.path.join(output_dir,  str(epoch + 1) +  '.pt'))
@@ -294,10 +270,10 @@ def main():
         test_loss=test_loss, test_acc=test_acc
     )   
 
-    torch.save(model.state_dict(), os.path.join(output_dir, 'PSGD.pt'))
-
 def train(args, train_loader, model, criterion, optimizer, epoch, lr_scheduler=None):
-    # Run one train epoch
+    """
+    Run one train epoch
+    """
     
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Epoch: [{}]'.format(epoch)
@@ -316,12 +292,15 @@ def train(args, train_loader, model, criterion, optimizer, epoch, lr_scheduler=N
         if args.half:
             input_var = input_var.half()
 
+        # Calculate model param by low dim param and P
+        model.module.prepare_forward()
+
         # Compute output
         output = model(input_var)
         loss = criterion(output, target_var)
 
         # Compute gradient and do SGD step
-        model.module.model.zero_grad()
+        model.zero_grad()
         optimizer.zero_grad()
         loss.backward()
         model.module.update_low_dim_grad()
@@ -339,8 +318,7 @@ def train(args, train_loader, model, criterion, optimizer, epoch, lr_scheduler=N
 
         if lr_scheduler is not None:
             lr_scheduler.step_update(num_updates=num_updates, metric=metric_logger.meters['train_loss'].global_avg)
-    # gather the stats from all processes
-    # metric_logger.synchronize_between_processes()
+
     logging.info(f"Averaged train stats: {metric_logger}")    
     
     train_epoch_loss = metric_logger.meters['train_loss'].global_avg
@@ -352,23 +330,10 @@ def train(args, train_loader, model, criterion, optimizer, epoch, lr_scheduler=N
         train_epoch_acc
     )
 
-def P_SGD(model, optimizer, grad, P):
-    # P_SGD algorithm
-
-    gk = torch.mm(P, grad.reshape(-1,1))
-
-    grad_proj = torch.mm(P.transpose(0, 1), gk)
-    grad_res = grad - grad_proj.reshape(-1)
-
-    # Update the model grad and do a step
-    utils.update_grad(model, grad_proj)
-    optimizer.step()
-
 def validate(args, val_loader, model, criterion, epoch):
     """
     Run evaluation
-    """
-    global test_acc, test_loss  
+    """  
 
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Epoch: [{}]'.format(epoch)
@@ -385,6 +350,9 @@ def validate(args, val_loader, model, criterion, epoch):
             if args.half:
                 input_var = input_var.half()
 
+            # Calculate model param by low dim param and P
+            model.module.prepare_forward()
+
             # Compute output
             output = model(input_var)
             loss = criterion(output, target_var)
@@ -397,7 +365,7 @@ def validate(args, val_loader, model, criterion, epoch):
             metric_logger.update(test_loss=loss.item())
             metric_logger.update(test_prec1=prec1.item())
 
-    # gather the stats from all processes
+    # Gather the stats from all processes
     # metric_logger.synchronize_between_processes()
     logging.info(f"Averaged train stats: {metric_logger}")
 

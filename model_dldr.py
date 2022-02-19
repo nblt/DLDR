@@ -31,9 +31,9 @@ class reparam_model_v1(nn.Module):
     def __init__(self, model, param0, n_components, P = None):
         super().__init__()
         self.model = model 
-        self.param0 = nn.Parameter(param0, requires_grad=False)
+        self.param0 = param0
         self.n_components = n_components
-        self.P = nn.Parameter(P, requires_grad=False)
+        self.P = P
         self.low_dim_linear_model = low_dim_linear_model(n_components)
 
     def update_model_param(self, param_vec):
@@ -52,8 +52,6 @@ class reparam_model_v1(nn.Module):
         with torch.no_grad():
             assert self.P is not None, "there is no transformation"
             low_param = self.low_dim_linear_model(self.P)[0]
-            # print(f"low param:{low_param[:20]}, param0:{self.param0[:20]}")
-            # self.param0 = self.param0.to(device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
             model_param = self.param0 + low_param
             self.update_model_param(model_param)
 
@@ -66,9 +64,7 @@ class reparam_model_v1(nn.Module):
     def update_low_dim_grad(self):
         with torch.no_grad():
             grad = utils.get_model_grad_vec(self.model)
-            # print(f"grad: {grad[:20]}")
             gk = torch.mm(self.P, grad.reshape(-1,1))
-            # print(f"gk: {gk.transpose(0, 1)[:20]}")
             for name, weight in self.low_dim_linear_model.named_parameters():
                 weight.grad = gk.transpose(0, 1)
 
@@ -162,27 +158,12 @@ class reparam_model_v2(nn.Module):
         for weight in self.low_dim_linear_model.parameters():
             weight.grad = torch.cat(grad_vec, 0).transpose(0, 1)
 
-# for test
-class fn(nn.Module):
-
-    def __init__(self):
-        super().__init__()
-        self.layer = nn.Sequential(
-            nn.Linear(3, 3),
-            nn.Linear(3, 3),
-            nn.Linear(3, 1)
-        )
-    def forward(self, x):
-        return self.layer(x)
-
 class reparam_model_v3(nn.Module):
     
     def __init__(self, model, n_components):
         super().__init__()
         self.model = model 
-        # self.param0 = nn.Parameter(param0, requires_grad=False)
         self.n_components = n_components
-        # self.P = nn.Parameter(P, requires_grad=False)
         self.low_dim_linear_model = low_dim_linear_model(n_components)
 
     def update_model_param(self, param_vec):
@@ -200,8 +181,6 @@ class reparam_model_v3(nn.Module):
     def prepare_forward(self, P, param0):
         with torch.no_grad():
             low_param = self.low_dim_linear_model(P)[0]
-            # print(f"low param:{low_param[:20]}, param0:{self.param0[:20]}")
-            # self.param0 = self.param0.to(device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
             model_param = param0 + low_param
             self.update_model_param(model_param)
 
@@ -214,11 +193,22 @@ class reparam_model_v3(nn.Module):
     def update_low_dim_grad(self, P):
         with torch.no_grad():
             grad = utils.get_model_grad_vec(self.model)
-            # print(f"grad: {grad[:20]}")
             gk = torch.mm(P, grad.reshape(-1,1))
-            # print(f"gk: {gk.transpose(0, 1)[:20]}")
             for name, weight in self.low_dim_linear_model.named_parameters():
                 weight.grad = gk.transpose(0, 1)
+
+# for test
+class fn(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.layer = nn.Sequential(
+            nn.Linear(3, 3),
+            nn.Linear(3, 3),
+            nn.Linear(3, 1)
+        )
+    def forward(self, x):
+        return self.layer(x)
 
 if __name__ == "__main__":
 

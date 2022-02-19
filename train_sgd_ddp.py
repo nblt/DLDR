@@ -100,7 +100,7 @@ parser.add_argument('--patience_epochs', type=int, default=10, metavar='N',
 parser.add_argument('--decay_rate', '--dr', type=float, default=0.1, metavar='RATE',
                     help='LR decay rate (default: 0.1)')
 
-# training
+# Training
 parser.add_argument('--epochs', default=200, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
@@ -219,7 +219,7 @@ def main():
     #     else:
     #         logging.info("no checkpoint found at '{}'".format(args.resume))
 
-    # define loss function (criterion) and optimizer
+    # Define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda()
 
     if args.half:
@@ -261,11 +261,11 @@ def main():
     #     args.weight_decay, args.weight_decay_end, args.epochs, num_training_steps_per_epoch)
     # print("Max WD = %.7f, Min WD = %.7f" % (max(wd_schedule_values), min(wd_schedule_values)))
 
-    # setup learning rate schedule and starting epoch
+    # Setup learning rate schedule and starting epoch
     lr_scheduler, num_epochs = timm.scheduler.create_scheduler(args, optimizer)
     start_epoch = 0
     if args.start_epoch is not None:
-        # a specified start_epoch will always override the resume epoch
+        # A specified start_epoch will always override the resume epoch
         start_epoch = args.start_epoch
     if lr_scheduler is not None and start_epoch > 0:
         lr_scheduler.step(start_epoch)
@@ -289,14 +289,14 @@ def main():
         if args.sched == "onecycle" and lr_scheduler is not None:
             lr_scheduler.step(epoch)
 
-        # train for one epoch
+        # Train for one epoch
         train_stats, train_epoch_loss, train_epoch_acc = train(args, 
             data_loader_train, model, criterion, optimizer, epoch, 
             loss_scaler, device, args.clip_grad, 
             start_steps=epoch * num_training_steps_per_epoch, 
             output_dir=output_dir)
 
-        # evaluate on validation set
+        # Evaluate on validation set
         val_stats, prec1, test_epoch_loss, test_epoch_acc = validate(args, 
             data_loader_test, model, criterion, epoch, device)
 
@@ -304,7 +304,7 @@ def main():
                 # step LR for next epoch
                 lr_scheduler.step(epoch + 1, val_stats["test_loss"])
 
-        # remember best prec@1 and save checkpoint
+        # Remember best prec@1 and save checkpoint
         is_best = prec1 > best_prec1
         best_prec1 = max(prec1, best_prec1)
         if utils.is_main_process():
@@ -312,7 +312,7 @@ def main():
             train_acc.append(train_epoch_acc)
             test_loss.append(test_epoch_loss)
             test_acc.append(test_epoch_acc)
-            # log metrics to wandb
+            # Log metrics to wandb
             log_stats = {'epoch': epoch, 'n_parameters': n_parameters}
             log_stats = dict(train_stats.items() | val_stats.items() | log_stats.items())
             if has_wandb and args.log_wandb:
@@ -348,7 +348,7 @@ def train(args, train_loader: Iterable, model: torch.nn.Module, criterion,
     """
     Run one train epoch
     """
-    # switch to train mode
+    # Switch to train mode
     model.train() 
     model_without_ddp = model.module
 
@@ -373,7 +373,7 @@ def train(args, train_loader: Iterable, model: torch.nn.Module, criterion,
         if args.half:
             input_var = input_var.half()
 
-        # compute output
+        # Compute output
         with torch.cuda.amp.autocast():
             output = model(input_var)
             loss = criterion(output, target_var)
@@ -382,7 +382,7 @@ def train(args, train_loader: Iterable, model: torch.nn.Module, criterion,
             print("Loss is {}, stopping training".format(loss.item()))
             sys.exit(1)
 
-        # compute gradient and do SGD step
+        # Compute gradient and do SGD step
         optimizer.zero_grad()
         is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
         grad_norm = None
@@ -399,7 +399,7 @@ def train(args, train_loader: Iterable, model: torch.nn.Module, criterion,
         output = output.float()
         loss = loss.float()
 
-        # measure accuracy and record loss
+        # Measure accuracy and record loss
         prec1 = utils.accuracy(output.data, target)[0]
 
         torch.cuda.synchronize()
@@ -437,7 +437,7 @@ def train(args, train_loader: Iterable, model: torch.nn.Module, criterion,
             # DLDR sampling
             utils.sample_model(epoch=epoch+1, output_dir=output_dir, model_without_ddp=model_without_ddp, step=step+1)
 
-    # gather the stats from all processes
+    # Gather the stats from all processes
     metric_logger.synchronize_between_processes()
     logging.info(f"Averaged train stats: {metric_logger}")
 
@@ -455,7 +455,7 @@ def validate(args, val_loader: Iterable, model: torch.nn.Module, criterion,
     """
     Run evaluation
     """
-    # switch to evaluate mode
+    # Switch to evaluate mode
     model.eval()
 
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -478,7 +478,7 @@ def validate(args, val_loader: Iterable, model: torch.nn.Module, criterion,
             output = output.float()
             loss = loss.float()
 
-            # measure accuracy and record loss
+            # Measure accuracy and record loss
             prec1 = utils.accuracy(output.data, target)[0]
 
             torch.cuda.synchronize()
@@ -486,7 +486,7 @@ def validate(args, val_loader: Iterable, model: torch.nn.Module, criterion,
             metric_logger.update(test_loss=loss.item())
             metric_logger.update(test_prec1=prec1.item())
     
-    # gather the stats from all processes
+    # Gather the stats from all processes
     metric_logger.synchronize_between_processes()
     logging.info(f"Averaged train stats: {metric_logger}")
 

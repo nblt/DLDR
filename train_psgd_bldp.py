@@ -182,16 +182,16 @@ def main():
         model.cuda()
         n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-    #     # Load sampled model parameters
-    #     W = utils.get_W(args, model, mode=args.sample_mode, beta=args.sample_beta)
+        # Load sampled model parameters
+        W = utils.get_W(args, model, mode=args.sample_mode, beta=args.sample_beta)
 
-    # # Obtain base variables through PCA
-    # if args.save_pca_p:
-    #     P, pca = utils.get_P(args, W, output_dir)
-    # else:
-    #     P, pca = utils.get_P(args, W)
+    # Obtain base variables through PCA
+    if args.save_pca_p:
+        P, pca = utils.get_P(args, W, output_dir)
+    else:
+        P, pca = utils.get_P(args, W)
 
-    P = np.load("output/CIFAR100/memory/psgd_ddp-CIFAR100-resnet101-128-1.0-40-momentum-step-epoch-20220218-151100/P_0_80_40.npy")
+    # P = np.load("output/CIFAR100/memory/psgd_ddp-CIFAR100-resnet101-128-1.0-40-momentum-step-epoch-20220218-151100/P_0_80_40.npy")
     P = torch.from_numpy(P).cuda()
 
     # Resume from params_start or selected dldr_start
@@ -207,7 +207,7 @@ def main():
     model = utils.get_model(args)
     reparam_model = reparam_model_v3(model=model, n_components=args.n_components)
 
-    gpu0_bsz = 8
+    gpu0_bsz = 0
     acc_grad = 1
     reparam_model = utils.BalancedDataParallel(gpu0_bsz // acc_grad, reparam_model, dim=0).cuda()
     # reparam_model = torch.nn.DataParallel(reparam_model).cuda()
@@ -326,11 +326,10 @@ def train(args, train_loader, model, P, param0, criterion, optimizer, epoch, lr_
 
         # Compute output
         output = model(input_var)
-
         loss = criterion(output, target_var)
 
         # Compute gradient and do SGD step
-        model.module.model.zero_grad()
+        model.zero_grad()
         optimizer.zero_grad()
         loss.backward()
         model.module.update_low_dim_grad(P)
@@ -339,8 +338,8 @@ def train(args, train_loader, model, P, param0, criterion, optimizer, epoch, lr_
         #     print(f"{name}.grad: {weight.grad[:20]}")
         #     print(f"before {name}: {weight[:20]}")
         optimizer.step()
-        # for name, weight in model.module.low_dim_linear_model.named_parameters():
-        #     print(f"after {name}: {weight[:20]}")
+        for name, weight in model.module.low_dim_linear_model.named_parameters():
+            print(f"after {name}: {weight[0][:10]}")
 
         output = output.float()
         loss = loss.float()
@@ -366,18 +365,6 @@ def train(args, train_loader, model, P, param0, criterion, optimizer, epoch, lr_
         train_epoch_acc
     )
 
-def P_SGD(model, optimizer, grad, P):
-    # P_SGD algorithm
-
-    gk = torch.mm(P, grad.reshape(-1,1))
-
-    grad_proj = torch.mm(P.transpose(0, 1), gk)
-    grad_res = grad - grad_proj.reshape(-1)
-
-    # Update the model grad and do a step
-    utils.update_grad(model, grad_proj)
-    optimizer.step()
-
 def validate(args, val_loader, model, P, param0, criterion, epoch):
     """
     Run evaluation
@@ -398,7 +385,8 @@ def validate(args, val_loader, model, P, param0, criterion, epoch):
 
             if args.half:
                 input_var = input_var.half()
-
+            for name, weight in model.module.low_dim_linear_model.named_parameters():
+                print(f"after {name}: {weight[0][:10]}")
             model.module.prepare_forward(P, param0)
             # Compute output
             output = model(input_var)
