@@ -1,6 +1,6 @@
 # DLDR
 
-This repository is the official implementation of **Low Dimensional Landscape Hypothesis is True: DNNs can be Trained in Tiny Subspaces**.
+This repository is the official implementation of **Low Dimensional Trajectory Hypothesis is True: DNNs can be Trained in Tiny Subspaces**.
 
 ## Requirements
 
