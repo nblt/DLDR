@@ -66,8 +66,8 @@ The second step is to conduct training in the subspaces extracted by DLDR (from 
 ```bash
 $ CUDA_VISIBLE_DEVICES=0 python -u train_pbfgs.py --epochs 20 --datasets $datasets --corrupt $c --params_start 0 --params_end 81  --batch-size 1024   --n_components 40 --arch=$model  --save-dir=save_labelnoise$c\_$model |& tee -a log_$model 
 ```
+where `epochs`  is the total number of training epochs for the P-BFGS algorithm, `params_start` is the index where DLDR sampling begins and `params_end` is where DLDR sampling stops. `n_components` is the number of variables we extract.
 
-where `epochs`  is the total training epochs for P-BFGS algorithm, `params_start` is where our DLDR sampling begins and `params_end` denotes where DLDR sampling stops. `n_components` is the number of variables we use.
+The `datasets` can be chosen from CIFAR10 and CIFAR100. The percentage of corrupted data `c` is a real number in the range `[0, 1]`.
 
-We can set the `datasets` among CIFAR10 and CIFAR100. The label noise level `c` is a real number in the range `[0, 1]`.
 
