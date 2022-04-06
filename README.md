@@ -68,6 +68,6 @@ $ CUDA_VISIBLE_DEVICES=0 python -u train_pbfgs.py --epochs 20 --datasets $datase
 ```
 where `epochs`  is the total number of training epochs for the P-BFGS algorithm, `params_start` is the index where DLDR sampling begins and `params_end` is where DLDR sampling stops. `n_components` is the number of variables we extract.
 
-The `datasets` can be chosen from CIFAR10 and CIFAR100. The percentage of corrupted data `c` is a real number in the range `[0, 1]`.
+The `datasets` can be chosen from CIFAR10/CIFAR100/ImageNet. The percentage of corrupted data `c` is a real number in the range `[0, 1]`.
 
 
