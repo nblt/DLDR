@@ -1,6 +1,6 @@
 # Dynamic Linear Dimensionality Reduction
 
-This repository is the official implementation of **Low Dimensional Trajectory Hypothesis is True: DNNs can be Trained in Tiny Subspaces**.
+This repository is the official implementation of **Low Dimensional Trajectory Hypothesis is True: DNNs can be Trained in Tiny Subspaces** (TPAMI 2022).
 
 ## Abstract
 
