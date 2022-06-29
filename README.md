@@ -62,3 +62,11 @@ where `epochs`  denotes the total training epochs for P-BFGS algorithm, `params_
 
 We can set the `datasets` among CIFAR10 and CIFAR100. The label noise level `c` is a real number in the range `[0, 1]`.
 
+## Citation
+>@article{li2022low, \
+  title={Low Dimensional Trajectory Hypothesis is True: DNNs can be Trained in Tiny Subspaces}, \
+  author={Li, Tao and Tan, Lei and Huang, Zhehao and Tao, Qinghua and Liu, Yipeng and Huang, Xiaolin}, \
+  journal={IEEE Transactions on Pattern Analysis and Machine Intelligence}, \
+  year={2022}, \
+  publisher={IEEE} \
+}
