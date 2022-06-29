@@ -72,10 +72,13 @@ The `datasets` can be chosen from CIFAR10/CIFAR100/ImageNet. The percentage of c
 
 
 ## Citation
->@article{li2022low, \
+
+```bash 
+@article{li2022low, \
   title={Low Dimensional Trajectory Hypothesis is True: DNNs can be Trained in Tiny Subspaces}, \
   author={Li, Tao and Tan, Lei and Huang, Zhehao and Tao, Qinghua and Liu, Yipeng and Huang, Xiaolin}, \
   journal={IEEE Transactions on Pattern Analysis and Machine Intelligence}, \
   year={2022}, \
   publisher={IEEE} \
 }
+```
